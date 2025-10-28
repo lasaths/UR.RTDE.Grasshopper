@@ -20,12 +20,17 @@ Local Build
 1. Open `UR.RTDE.Grasshopper.sln` in Visual Studio 2022.
 2. Select desired target framework configuration.
 3. Build. Output `.gha` will be placed under `bin/Debug/<tfm>` or `bin/Release/<tfm>`.
+4. Yak packaging runs by default when Yak is available.
+   - Default Yak paths: Windows `C:\\Program Files\\Rhino 8\\System\\Yak.exe`, macOS `/Applications/Rhino 8.app/Contents/Resources/bin/yak`.
+   - If Yak is elsewhere, pass `-p:YakExecutable="<path-to-yak>"` at build.
+   - To disable Yak packaging for a build: `-p:BuildYakPackage=false`.
 
 Install in Grasshopper
 ----------------------
 - Copy the built `.gha` to your Grasshopper Libraries folder:
   - Windows: `%AppData%\Grasshopper\Libraries`
   - Or package with Yak (Rhino 8): build triggers are set in the csproj to help create a Yak spec in the output directory.
+  - Yak packages are generated in the output directory when Yak is available.
 
 UR.RTDE Package Usage
 ---------------------
@@ -33,14 +38,15 @@ UR.RTDE Package Usage
   - `dotnet add package UR.RTDE`
   - Or add `<PackageReference Include="UR.RTDE" Version="1.0.0" />` to the project file.
 - The package includes native dependencies and requires no external Python.
+ - This repo intentionally avoids local project references; only the NuGet package is used.
 
 Quick Component Sketch
 ----------------------
-- The provided `RTDE_GrasshopperComponent` is a stub. Typical usage pattern inside `SolveInstance`:
-  1. Read robot IP and optional motion parameters from inputs.
-  2. Create `RTDEControl`/`RTDEReceive` instances from `UR.RTDE`.
-  3. Perform motion/read operations.
-  4. Dispose deterministically (`using`/`IDisposable`).
+- Minimal component set:
+  - UR Session: manage connection and expose a `session` handle.
+  - UR Read: dropdown selects Joints, Pose, IO, Modes.
+  - UR Command: dropdown selects MoveJ, MoveL, StopJ, StopL, SetDO.
+  - Use a GH Timer for polling reads; avoid background threads.
 
 Test Against URSim First
 ------------------------
@@ -53,4 +59,12 @@ Conventions for Agents
 - Prefer small, focused components; explicit names and guard clauses.
 - Do not introduce runtime prompts or interactive steps in build.
 - If you need UR connectivity smoke-tests, write quick, disposable code in the terminal or a temporary test harness—avoid committing files.
+
+Icons
+-----
+- Use Phosphor Icons (https://phosphoricons.com), MIT License.
+- To override the generated fallback icons, add 24x24 PNGs as Embedded Resources under `Resources/Icons/` with names:
+  - `phosphor_plug_24.png` (UR Session)
+  - `phosphor_eye_24.png` (UR Read)
+  - `phosphor_play_24.png` (UR Command)
 

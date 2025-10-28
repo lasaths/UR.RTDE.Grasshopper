@@ -20,10 +20,24 @@
     <Title>UR.RTDE.Grasshopper</Title>
     <Company>UR.RTDE.Grasshopper Authors</Company>
     <Description>Description of UR.RTDE.Grasshopper</Description>
+    <!-- Build Yak package by default when Yak is available -->
+    <BuildYakPackage Condition="'$(BuildYakPackage)' == ''">True</BuildYakPackage>
   </PropertyGroup>
   
   <ItemGroup>
     <PackageReference Include="Grasshopper" Version="8.0.23304.9001" ExcludeAssets="runtime" />
+  </ItemGroup>
+
+  <!-- Compile includes are wildcarded; moving files into subfolders is automatically picked up -->
+
+  <!-- Embed any PNG icons placed under Resources/Icons -->
+  <ItemGroup>
+    <EmbeddedResource Include="Resources\Icons\**\*.png" />
+  </ItemGroup>
+
+  <!-- Use UR.RTDE via NuGet only -->
+  <ItemGroup>
+    <PackageReference Include="UR.RTDE" Version="1.0.0" />
   </ItemGroup>
   
   <!-- For Windows only builds -->
@@ -46,8 +60,6 @@
     <PropertyGroup>
       <YakExecutable Condition="$(YakExecutable) == '' and $([MSBuild]::IsOSPlatform(windows)) and Exists('C:\Program Files\Rhino 8\System\Yak.exe')">C:\Program Files\Rhino 8\System\Yak.exe</YakExecutable>
       <YakExecutable Condition="$(YakExecutable) == '' and $([MSBuild]::IsOSPlatform(macos)) and Exists('/Applications/Rhino 8.app/Contents/Resources/bin/yak')">/Applications/Rhino 8.app/Contents/Resources/bin/yak</YakExecutable>
-      
-      <BuildYakPackage Condition="$(BuildYakPackage) == '' and $(YakExecutable) != '' and Exists($(YakExecutable))">True</BuildYakPackage>
     </PropertyGroup>
     
     <Warning Text="Could not find Yak executable" Condition="$(YakExecutable) == ''" />
@@ -58,9 +70,18 @@
     
     <Delete Files="@(YakPackagesToDelete)" />
 
-    <Exec Command="&quot;$(YakExecutable)&quot; spec" WorkingDirectory="$(OutputPath)" Condition="$(BuildYakPackage) == 'True'" />
-    <Exec Command="&quot;$(YakExecutable)&quot; build" WorkingDirectory="$(OutputPath)" Condition="$(BuildYakPackage) == 'True'" />
+    <Exec Command="&quot;$(YakExecutable)&quot; spec" WorkingDirectory="$(OutputPath)" Condition="$(BuildYakPackage) == 'True' and '$(YakExecutable)' != '' and Exists($(YakExecutable))" />
+    <Exec Command="&quot;$(YakExecutable)&quot; build" WorkingDirectory="$(OutputPath)" Condition="$(BuildYakPackage) == 'True' and '$(YakExecutable)' != '' and Exists($(YakExecutable))" />
 
+  </Target>
+
+  <!-- Generate duotone PNG icons at build time if not present -->
+  <Target Name="GenerateDuotoneIcons" BeforeTargets="PrepareResources">
+    <PropertyGroup>
+      <IconScript>$(MSBuildThisFileDirectory)tools\generate-icons.ps1</IconScript>
+      <DoIconGen Condition="Exists('$(IconScript)') and $([MSBuild]::IsOSPlatform(windows))">True</DoIconGen>
+    </PropertyGroup>
+    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(IconScript)&quot;" Condition="$(DoIconGen) == 'True'" />
   </Target>
 
 </Project>
