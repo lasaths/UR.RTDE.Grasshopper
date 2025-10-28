@@ -7,7 +7,7 @@ This repository contains a minimal Grasshopper (Rhino) plugin scaffold that inte
 
 Key Links
 ---------
-- NuGet package: [UR.RTDE](https://www.nuget.org/packages/UR.RTDE/#readme-body-tab)
+- NuGet package: [UR.RTDE](https://www.nuget.org/packages/UR.RTDE/)
 - ur_rtde C++ library docs: [SDU Robotics ur_rtde](https://sdurobotics.gitlab.io/ur_rtde/)
 
 Targets and Compatibility
