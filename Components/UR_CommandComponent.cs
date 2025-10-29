@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Windows.Forms;
 using Grasshopper.Kernel;
+using Grasshopper.Kernel.Parameters;
 
 namespace UR.RTDE.Grasshopper
 {
@@ -22,15 +23,6 @@ namespace UR.RTDE.Grasshopper
         protected override void RegisterInputParams(GH_InputParamManager p)
         {
             p.AddParameter(new URSessionParam(), "Session", "S", "UR RTDE session handle.", GH_ParamAccess.item);
-            p.AddNumberParameter("Joints", "Q", "Joint target angles (rad). Used for MoveJ.", GH_ParamAccess.list);
-            p.AddNumberParameter("Speed", "V", "Motion speed.", GH_ParamAccess.item, 1.05);
-            p.AddNumberParameter("Acceleration", "A", "Motion acceleration.", GH_ParamAccess.item, 1.4);
-            p.AddBooleanParameter("Async", "X", "Run asynchronously (non-blocking).", GH_ParamAccess.item, false);
-            p.AddNumberParameter("Deceleration", "D", "Stop joint deceleration (for Stop).", GH_ParamAccess.item, 2.0);
-            p.AddNumberParameter("Pose", "P", "TCP target pose [x,y,z,rx,ry,rz] (m, rad). Used for MoveL.", GH_ParamAccess.list);
-            p.AddPlaneParameter("Target", "T", "Target Plane for MoveL (alternative to Pose).", GH_ParamAccess.item);
-            p.AddIntegerParameter("Pin", "I", "Digital output pin (SetDO).", GH_ParamAccess.item, 0);
-            p.AddBooleanParameter("Value", "B", "Digital output value (SetDO).", GH_ParamAccess.item, false);
         }
 
         protected override void RegisterOutputParams(GH_OutputParamManager p)
@@ -67,14 +59,14 @@ namespace UR.RTDE.Grasshopper
                             throw new ArgumentException("q must be a list of 6 joint angles (rad)");
                         var okMove = session.MoveJ(q.ToArray(), speed, accel, async);
                         da.SetData(0, okMove);
-                        da.SetData(1, okMove ? "ok" : "MoveJ failed");
+                        da.SetData(1, okMove ? "ok" : $"MoveJ failed: {session.LastError ?? "Unknown error"}");
                         break;
 
                     case URActionKind.MoveL:
                         var pose = new List<double>();
                         da.GetDataList(6, pose);
                         Rhino.Geometry.Plane plane = Rhino.Geometry.Plane.Unset;
-                        bool hasPlane = da.GetData(9, ref plane);
+                        bool hasPlane = da.GetData(7, ref plane);
                         double lSpeed = 0.25, lAccel = 1.2; bool lAsync = false;
                         da.GetData(2, ref lSpeed);
                         da.GetData(3, ref lAccel);
@@ -92,7 +84,7 @@ namespace UR.RTDE.Grasshopper
                         }
                         var okMoveL = session.MoveL(p6, lSpeed, lAccel, lAsync);
                         da.SetData(0, okMoveL);
-                        da.SetData(1, okMoveL ? "ok" : "MoveL failed");
+                        da.SetData(1, okMoveL ? "ok" : $"MoveL failed: {session.LastError ?? "Unknown error"}");
                         break;
 
                     case URActionKind.StopJ:
@@ -100,23 +92,23 @@ namespace UR.RTDE.Grasshopper
                         da.GetData(5, ref decel);
                         var okStop = session.StopJ(decel);
                         da.SetData(0, okStop);
-                        da.SetData(1, okStop ? "ok" : "Stop failed");
+                        da.SetData(1, okStop ? "ok" : $"Stop failed: {session.LastError ?? "Unknown error"}");
                         break;
                     case URActionKind.StopL:
                         double ldecel = 2.0;
                         da.GetData(5, ref ldecel);
                         var okStopL = session.StopL(ldecel);
                         da.SetData(0, okStopL);
-                        da.SetData(1, okStopL ? "ok" : "StopL failed");
+                        da.SetData(1, okStopL ? "ok" : $"StopL failed: {session.LastError ?? "Unknown error"}");
                         break;
 
                     case URActionKind.SetDO:
                         int pin = 0; bool val = false;
-                        da.GetData(7, ref pin);
-                        da.GetData(8, ref val);
+                        da.GetData(8, ref pin);
+                        da.GetData(9, ref val);
                         var okDo = session.SetStandardDigitalOut(pin, val);
                         da.SetData(0, okDo);
-                        da.SetData(1, okDo ? "ok" : "SetDO failed");
+                        da.SetData(1, okDo ? "ok" : $"SetDO failed: {session.LastError ?? "Unknown error"}");
                         break;
 
                     default:
@@ -132,49 +124,103 @@ namespace UR.RTDE.Grasshopper
             }
         }
 
-        protected override System.Drawing.Bitmap Icon => IconProvider.Command;
+        protected override System.Drawing.Bitmap Icon
+        {
+            get
+            {
+                var assembly = System.Reflection.Assembly.GetExecutingAssembly();
+                var resourceName = "UR.RTDE.Grasshopper.Resources.Icons.play-duotone.png";
+                using (var stream = assembly.GetManifestResourceStream(resourceName))
+                {
+                    if (stream != null)
+                        return new System.Drawing.Bitmap(stream);
+                }
+                return null;
+            }
+        }
         public override Guid ComponentGuid => new Guid("2233737c-7ba5-4bf9-9c14-924c5d7077cd");
 
         protected override void AppendAdditionalComponentMenuItems(ToolStripDropDown menu)
         {
             base.AppendAdditionalComponentMenuItems(menu);
-            Menu_AppendItem(menu, "Action: MoveJ", (s, e) => { _action = URActionKind.MoveJ; UpdateOptionalFlags(); ExpireSolution(true); }, true, _action == URActionKind.MoveJ);
-            Menu_AppendItem(menu, "Action: MoveL", (s, e) => { _action = URActionKind.MoveL; UpdateOptionalFlags(); ExpireSolution(true); }, true, _action == URActionKind.MoveL);
-            Menu_AppendItem(menu, "Action: StopJ", (s, e) => { _action = URActionKind.StopJ; UpdateOptionalFlags(); ExpireSolution(true); }, true, _action == URActionKind.StopJ);
-            Menu_AppendItem(menu, "Action: StopL", (s, e) => { _action = URActionKind.StopL; UpdateOptionalFlags(); ExpireSolution(true); }, true, _action == URActionKind.StopL);
-            Menu_AppendItem(menu, "Action: SetDO", (s, e) => { _action = URActionKind.SetDO; UpdateOptionalFlags(); ExpireSolution(true); }, true, _action == URActionKind.SetDO);
+            Menu_AppendItem(menu, "Action: MoveJ", (s, e) => { _action = URActionKind.MoveJ; RebuildInputsForAction(); }, true, _action == URActionKind.MoveJ);
+            Menu_AppendItem(menu, "Action: MoveL", (s, e) => { _action = URActionKind.MoveL; RebuildInputsForAction(); }, true, _action == URActionKind.MoveL);
+            Menu_AppendItem(menu, "Action: StopJ", (s, e) => { _action = URActionKind.StopJ; RebuildInputsForAction(); }, true, _action == URActionKind.StopJ);
+            Menu_AppendItem(menu, "Action: StopL", (s, e) => { _action = URActionKind.StopL; RebuildInputsForAction(); }, true, _action == URActionKind.StopL);
+            Menu_AppendItem(menu, "Action: SetDO", (s, e) => { _action = URActionKind.SetDO; RebuildInputsForAction(); }, true, _action == URActionKind.SetDO);
         }
 
         public override void AddedToDocument(GH_Document document)
         {
             base.AddedToDocument(document);
-            UpdateOptionalFlags();
+            RebuildInputsForAction();
         }
 
         private void UpdateOptionalFlags()
         {
-            if (Params == null || Params.Input == null || Params.Input.Count < 10) return;
-            for (int i = 1; i < Params.Input.Count; i++)
+        }
+
+        private void RebuildInputsForAction()
+        {
+            if (Params == null) return;
+
+            while (Params.Input.Count > 1)
             {
-                Params.Input[i].Optional = true;
+                var toRemove = Params.Input[1];
+                Params.UnregisterInputParameter(toRemove, true);
+            }
+
+            Param_Number Num(string name, string nick, string desc, GH_ParamAccess access, double? def = null, bool optional = true)
+            {
+                var p = new Param_Number { Name = name, NickName = nick, Description = desc, Access = access, Optional = optional };
+                if (def.HasValue) p.SetPersistentData(def.Value);
+                return p;
+            }
+            Param_Boolean Bool(string name, string nick, string desc, bool? def = null, bool optional = true)
+            {
+                var p = new Param_Boolean { Name = name, NickName = nick, Description = desc, Optional = optional };
+                if (def.HasValue) p.SetPersistentData(def.Value);
+                return p;
+            }
+            Param_Integer Int(string name, string nick, string desc, int? def = null, bool optional = true)
+            {
+                var p = new Param_Integer { Name = name, NickName = nick, Description = desc, Optional = optional };
+                if (def.HasValue) p.SetPersistentData(def.Value);
+                return p;
             }
 
             switch (_action)
             {
                 case URActionKind.MoveJ:
-                    Params.Input[1].Optional = false;
+                    Params.RegisterInputParam(Num("Joints", "Q", "Joint target angles (rad)", GH_ParamAccess.list, null, false));
+                    Params.RegisterInputParam(Num("Speed", "V", "Motion speed", GH_ParamAccess.item, 1.05));
+                    Params.RegisterInputParam(Num("Acceleration", "A", "Motion acceleration", GH_ParamAccess.item, 1.4));
+                    Params.RegisterInputParam(Bool("Async", "X", "Run asynchronously (non-blocking)", false));
                     break;
+
                 case URActionKind.MoveL:
+                    var pose = Num("Pose", "P", "TCP pose [x,y,z,rx,ry,rz] (m,rad)", GH_ParamAccess.list);
+                    pose.Optional = true;
+                    Params.RegisterInputParam(pose);
+                    Params.RegisterInputParam(new Param_Plane { Name = "Target", NickName = "T", Description = "Target Plane (alternative to Pose)", Optional = true });
+                    Params.RegisterInputParam(Num("Speed", "V", "Motion speed", GH_ParamAccess.item, 0.25));
+                    Params.RegisterInputParam(Num("Acceleration", "A", "Motion acceleration", GH_ParamAccess.item, 1.2));
+                    Params.RegisterInputParam(Bool("Async", "X", "Run asynchronously (non-blocking)", false));
                     break;
+
                 case URActionKind.StopJ:
                 case URActionKind.StopL:
-                    Params.Input[5].Optional = false;
+                    Params.RegisterInputParam(Num("Deceleration", "D", "Stop deceleration", GH_ParamAccess.item, 2.0, false));
                     break;
+
                 case URActionKind.SetDO:
-                    Params.Input[8].Optional = false;
-                    Params.Input[9].Optional = false;
+                    Params.RegisterInputParam(Int("Pin", "I", "Digital output pin", 0, false));
+                    Params.RegisterInputParam(Bool("Value", "B", "Digital output value", false, false));
                     break;
             }
+
+            Params.OnParametersChanged();
+            ExpireSolution(true);
         }
     }
 }

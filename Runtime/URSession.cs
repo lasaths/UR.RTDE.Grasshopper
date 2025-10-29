@@ -2,13 +2,12 @@ using System;
 
 namespace UR.RTDE.Grasshopper
 {
-    // Lightweight session wrapper that owns RTDEControl and RTDEReceive
     public sealed class URSession : IDisposable
     {
         private readonly object _lockObj = new object();
         private UR.RTDE.RTDEControl _control;
         private UR.RTDE.RTDEReceive _receive;
-        private object _io; // Optional RTDEIO instance (late-bound via reflection)
+        private object _io;
 
         public string Ip { get; }
         public bool IsConnected { get; private set; }
@@ -24,7 +23,6 @@ namespace UR.RTDE.Grasshopper
             try
             {
                 DisposeClients();
-                // Construct control/receive clients. Default options are used to keep it simple.
                 _control = new UR.RTDE.RTDEControl(Ip);
                 _receive = new UR.RTDE.RTDEReceive(Ip);
                 IsConnected = true;
@@ -49,7 +47,6 @@ namespace UR.RTDE.Grasshopper
         public double[] GetActualTCPPose()
         {
             if (_receive == null) throw new InvalidOperationException("Not connected");
-            // Try several known method names across versions
             return InvokeReceive<double[]>(new[] { "GetActualTCPPose", "GetActualTcpPose", "GetActualToolPose" });
         }
 
@@ -96,8 +93,6 @@ namespace UR.RTDE.Grasshopper
             if (_control == null) throw new InvalidOperationException("Not connected");
             lock (_lockObj)
             {
-                // Prefer RTDEIO if available; otherwise attempt on control
-                // Lazy create RTDEIO via reflection to avoid hard dependency
                 if (_io == null)
                 {
                     var ioType = Type.GetType("UR.RTDE.RTDEIO, UR.RTDE");
@@ -125,7 +120,6 @@ namespace UR.RTDE.Grasshopper
             }
         }
 
-        // IO reads
         public int GetDigitalInState()
         {
             if (_receive == null) throw new InvalidOperationException("Not connected");
@@ -162,7 +156,6 @@ namespace UR.RTDE.Grasshopper
             return InvokeReceive<double>(new[] { "GetStandardAnalogOutput1", "GetActualStandardAnalogOutput1" });
         }
 
-        // Modes / status
         public int GetRobotMode()
         {
             if (_receive == null) throw new InvalidOperationException("Not connected");
@@ -224,7 +217,11 @@ namespace UR.RTDE.Grasshopper
             try
             {
                 var mi = _control.GetType().GetMethod(methodName);
-                if (mi == null) throw new MissingMethodException($"Method not found: {methodName}");
+                if (mi == null) 
+                {
+                    LastError = $"Method not found: {methodName}";
+                    return false;
+                }
                 var result = mi.Invoke(_control, args);
                 if (mi.ReturnType == typeof(bool))
                     return result is bool b && b;
@@ -238,3 +235,5 @@ namespace UR.RTDE.Grasshopper
         }
     }
 }
+
+

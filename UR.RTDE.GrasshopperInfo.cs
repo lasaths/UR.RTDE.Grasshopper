@@ -10,7 +10,7 @@ namespace UR.RTDE.Grasshopper
         public override string Name => "UR.RTDE.Grasshopper";
 
         //Return a 24x24 pixel bitmap to represent this GHA library.
-        public override Bitmap Icon => IconProvider.Read;
+        public override Bitmap Icon => null;
 
         //Return a short string describing the purpose of this GHA library.
         public override string Description => "Minimal Grasshopper components for UR RTDE: session, read, and command (MoveJ/MoveL/Stop/SetDO). Test with URSim first.";

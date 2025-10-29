@@ -22,29 +22,24 @@ namespace UR.RTDE.Grasshopper
         protected override void RegisterInputParams(GH_InputParamManager p)
         {
             p.AddParameter(new URSessionParam(), "Session", "S", "UR RTDE session handle.", GH_ParamAccess.item);
-            p.AddBooleanParameter("Sample", "X", "Trigger a sample read (use with GH Timer).", GH_ParamAccess.item, false);
         }
 
         protected override void RegisterOutputParams(GH_OutputParamManager p)
         {
-            p.AddGenericParameter("Data", "D", "Read result. Joints: [q0..q5] (rad). Pose: [x,y,z,rx,ry,rz] (m,rad). IO: [din_bits,dout_bits,ai0,ai1,ao0,ao1]. Modes: [robot_mode,safety_mode,program_running].", GH_ParamAccess.item);
-            p.AddBooleanParameter("OK", "O", "True if read succeeded.", GH_ParamAccess.item);
+            p.AddGenericParameter("Data", "D", "Read result. Joints: list of 6 numbers. Pose: Plane. IO and Modes: tree with sub-paths.", GH_ParamAccess.item);
             p.AddTextParameter("Message", "M", "Message or error.", GH_ParamAccess.item);
         }
 
         protected override void SolveInstance(IGH_DataAccess da)
         {
             URSessionGoo goo = null;
-            bool sample = false;
             if (!da.GetData(0, ref goo)) return;
-            da.GetData(1, ref sample);
 
             var session = goo?.Value;
             if (session == null || !session.IsConnected)
             {
                 da.SetData(0, null);
-                da.SetData(1, false);
-                da.SetData(2, "Session not connected");
+                da.SetData(1, "Session not connected");
                 return;
             }
 
@@ -54,15 +49,18 @@ namespace UR.RTDE.Grasshopper
                 {
                     case URReadKind.Joints:
                         var q = session.GetActualQ();
-                        da.SetData(0, new GH_Number[6] { new GH_Number(q[0]), new GH_Number(q[1]), new GH_Number(q[2]), new GH_Number(q[3]), new GH_Number(q[4]), new GH_Number(q[5]) });
-                        da.SetData(1, true);
-                        da.SetData(2, "ok");
+                        var qTree = new GH_Structure<IGH_Goo>();
+                        var qPath = new GH_Path(0);
+                        for (int i = 0; i < 6 && i < q.Length; i++)
+                            qTree.Append(new GH_Number(q[i]), qPath);
+                        da.SetDataTree(0, qTree);
+                        da.SetData(1, "ok");
                         break;
                     case URReadKind.Pose:
                         var p6 = session.GetActualTCPPose();
-                        da.SetData(0, new GH_Number[6] { new GH_Number(p6[0]), new GH_Number(p6[1]), new GH_Number(p6[2]), new GH_Number(p6[3]), new GH_Number(p6[4]), new GH_Number(p6[5]) });
-                        da.SetData(1, true);
-                        da.SetData(2, "ok");
+                        var plane = PoseUtils.PoseToPlane(p6);
+                        da.SetData(0, plane);
+                        da.SetData(1, "ok");
                         break;
                     case URReadKind.IO:
                         var din = session.GetDigitalInState();
@@ -88,8 +86,7 @@ namespace UR.RTDE.Grasshopper
                         ioTree.Append(new GH_Number(ao0), pAnalog);
                         ioTree.Append(new GH_Number(ao1), pAnalog);
                         da.SetDataTree(0, ioTree);
-                        da.SetData(1, true);
-                        da.SetData(2, "ok");
+                        da.SetData(1, "ok");
                         break;
                     case URReadKind.Modes:
                         var rmode = session.GetRobotMode();
@@ -101,25 +98,35 @@ namespace UR.RTDE.Grasshopper
                         modeTree.Append(new GH_String($"{MapSafetyMode(smode)} ({smode})"), new GH_Path(1));
                         modeTree.Append(new GH_Boolean(running), new GH_Path(2));
                         da.SetDataTree(0, modeTree);
-                        da.SetData(1, true);
-                        da.SetData(2, "ok");
+                        da.SetData(1, "ok");
                         break;
                     default:
                         da.SetData(0, null);
-                        da.SetData(1, false);
-                        da.SetData(2, "Not implemented");
+                        da.SetData(1, "Not implemented");
                         break;
                 }
             }
             catch (Exception ex)
             {
                 da.SetData(0, null);
-                da.SetData(1, false);
-                da.SetData(2, ex.Message);
+                da.SetData(1, ex.Message);
             }
         }
 
-        protected override System.Drawing.Bitmap Icon => IconProvider.Read;
+        protected override System.Drawing.Bitmap Icon
+        {
+            get
+            {
+                var assembly = System.Reflection.Assembly.GetExecutingAssembly();
+                var resourceName = "UR.RTDE.Grasshopper.Resources.Icons.eye-duotone.png";
+                using (var stream = assembly.GetManifestResourceStream(resourceName))
+                {
+                    if (stream != null)
+                        return new System.Drawing.Bitmap(stream);
+                }
+                return null;
+            }
+        }
         public override Guid ComponentGuid => new Guid("5db18069-6306-4b80-957b-f189fc71f8cf");
 
         protected override void AppendAdditionalComponentMenuItems(ToolStripDropDown menu)

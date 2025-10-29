@@ -5,7 +5,6 @@ using Grasshopper.Kernel.Parameters;
 
 namespace UR.RTDE.Grasshopper
 {
-    // Strongly-typed parameter for URSession
     public class URSessionParam : GH_PersistentParam<URSessionGoo>
     {
         public URSessionParam()
@@ -17,7 +16,6 @@ namespace UR.RTDE.Grasshopper
 
         protected override GH_GetterResult Prompt_Singular(ref URSessionGoo value)
         {
-            // No UI prompt support; users connect sessions from the component.
             return GH_GetterResult.cancel;
         }
 
@@ -27,3 +25,5 @@ namespace UR.RTDE.Grasshopper
         }
     }
 }
+
+

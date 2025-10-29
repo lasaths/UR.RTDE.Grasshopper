@@ -16,5 +16,13 @@
         "RHINO_PACKAGE_DIRS": "$(ProjectDir)$(OutputPath)\\"
       }
     },
+    "Rhino 7 - netfx": {
+      "commandName": "Executable",
+      "executablePath": "C:\\Program Files\\Rhino 7\\System\\Rhino.exe",
+      "commandLineArgs": "/runscript=\"_Grasshopper\"",
+      "environmentVariables": {
+        "RHINO_PACKAGE_DIRS": "$(ProjectDir)$(OutputPath)\\"
+      }
+    }
   }
 }

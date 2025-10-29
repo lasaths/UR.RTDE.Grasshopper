@@ -9,7 +9,8 @@
     -->
     <TargetFrameworks>net7.0-windows;net7.0;net48</TargetFrameworks>
     <EnableDynamicLoading>true</EnableDynamicLoading>
-    <TargetExt>.gha</TargetExt>
+    <TargetExt Condition="'$(Configuration)' != 'Test'">.gha</TargetExt>
+    <TargetExt Condition="'$(Configuration)' == 'Test'">.dll</TargetExt>
     <NoWarn>NU1701;NETSDK1086</NoWarn>
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
   </PropertyGroup>
@@ -23,12 +24,24 @@
     <!-- Build Yak package by default when Yak is available -->
     <BuildYakPackage Condition="'$(BuildYakPackage)' == ''">True</BuildYakPackage>
   </PropertyGroup>
+
+  <!-- Allow test assembly to access internal members -->
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleTo">
+      <_Parameter1>UR.RTDE.Grasshopper.Tests</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
   
   <ItemGroup>
     <PackageReference Include="Grasshopper" Version="8.0.23304.9001" ExcludeAssets="runtime" />
   </ItemGroup>
 
   <!-- Compile includes are wildcarded; moving files into subfolders is automatically picked up -->
+  <ItemGroup>
+    <Compile Remove="UR.RTDE.Grasshopper.Tests\**" />
+    <EmbeddedResource Remove="UR.RTDE.Grasshopper.Tests\**" />
+    <None Remove="UR.RTDE.Grasshopper.Tests\**" />
+  </ItemGroup>
 
   <!-- Embed any PNG icons placed under Resources/Icons -->
   <ItemGroup>
@@ -39,6 +52,23 @@
   <ItemGroup>
     <PackageReference Include="UR.RTDE" Version="1.0.0" />
   </ItemGroup>
+
+  <!-- Copy UR.RTDE.dll and native dependencies to output directory -->
+  <Target Name="CopyURRTDEDependencies" AfterTargets="Build">
+    <ItemGroup>
+      <URRTDEFiles Include="$(NuGetPackageRoot)ur.rtde\1.0.0\lib\$(TargetFramework)\UR.RTDE.dll" />
+      <URRTDENativeFiles Include="$(NuGetPackageRoot)ur.rtde\1.0.0\runtimes\**\*" />
+    </ItemGroup>
+    
+    <Copy SourceFiles="@(URRTDEFiles)" DestinationFolder="$(OutputPath)" Condition="Exists('%(URRTDEFiles.Identity)')" />
+    <Copy SourceFiles="@(URRTDENativeFiles)" DestinationFolder="$(OutputPath)\runtimes\%(RecursiveDir)" Condition="Exists('%(URRTDENativeFiles.Identity)')" />
+    
+    <!-- Also copy native DLLs directly to output directory for easier loading -->
+    <ItemGroup>
+      <NativeDLLs Include="$(OutputPath)\runtimes\win-x64\native\*.dll" />
+    </ItemGroup>
+    <Copy SourceFiles="@(NativeDLLs)" DestinationFolder="$(OutputPath)" Condition="Exists('%(NativeDLLs.Identity)')" />
+  </Target>
   
   <!-- For Windows only builds -->
   <PropertyGroup Condition="$(TargetFramework.Contains('-windows')) or $(TargetFramework.StartsWith('net4'))">
