@@ -12,11 +12,6 @@ Links
 - NuGet package: [UR.RTDE](https://www.nuget.org/packages/UR.RTDE/#readme-body-tab)
 - ur_rtde C++ library docs: [SDU Robotics ur_rtde](https://sdurobotics.gitlab.io/ur_rtde/)
 
-Colors
-------
-- UR robot blue (RAL Design 240 70 20, approx): `#82B2C9` (RGB 130,178,201)
-- UR robot grey (RAL 9007 Grey aluminium, approx): `#8F8F8C` (RGB 143,143,140)
-
 Status
 ------
 - Targets: `net48`, `net7.0`, `net7.0-windows` (see `UR.RTDE.Grasshopper.csproj`).
@@ -69,14 +64,15 @@ Notes
 Components
 ----------
 - UR Session
-  - Inputs: `ip`, `auto_connect`, `timeout_ms`, `reconnect`
+  - Inputs: `ip` (optional, defaults to `127.0.0.1`), `timeout_ms` (optional, defaults to `2000`), `reconnect` (optional, defaults to `false`)
   - Outputs: `session`, `is_connected`, `status`, `last_error`
+  - Visual indicator: Shows connection status in the viewport (green point when connected)
 - UR Read (context menu: Joints, Pose, IO, Modes)
   - Auto listen: enable from context menu to schedule periodic reads without a GH Timer
     - Toggle: "Auto listen (schedule reads)"
     - Interval presets: 20, 50, 100, 200, 500, 1000 ms (context submenu "Auto interval")
-  - Joints: list `[q0..q5]` (rad)
-  - Pose: list `[x,y,z,rx,ry,rz]` (m, rad)
+  - Joints: outputs DataTree with `[q0..q5]` (rad)
+  - Pose: outputs a Plane (converted from TCP pose `[x,y,z,rx,ry,rz]` in m, rad)
   - IO: DataTree
     - `{0}`: `din[0..17]` as bools
     - `{1}`: `dout[0..17]` as bools
@@ -86,10 +82,10 @@ Components
     - `{1}`: safety mode label+code
     - `{2}`: program running (bool)
 - UR Command (context menu: MoveJ, MoveL, StopJ, StopL, SetDO)
-  - MoveJ: inputs `q[6]`, `speed`, `accel`, `async`
-  - MoveL: inputs `target:Plane` or `pose[6]`, `speed`, `accel`, `async`
-  - StopJ/StopL: input `decel`
-  - SetDO: inputs `pin`, `value`
+  - MoveJ: inputs `q[6]` (joint angles in rad, required), `speed` (default `1.05`), `accel` (default `1.4`), `async` (default `false`)
+  - MoveL: inputs `pose[6]` (optional, `[x,y,z,rx,ry,rz]` in m, rad), `target` (optional Plane, alternative to pose), `speed` (default `0.25`), `accel` (default `1.2`), `async` (default `false`)
+  - StopJ/StopL: input `decel` (default `2.0`, required)
+  - SetDO: inputs `pin` (required), `value` (required bool)
 
 Safety and Testing
 ------------------
