@@ -12,6 +12,21 @@ namespace UR.RTDE.Grasshopper
         {
         }
 
+        protected override System.Drawing.Bitmap Icon
+        {
+            get
+            {
+                var assembly = System.Reflection.Assembly.GetExecutingAssembly();
+                var resourceName = "UR.RTDE.Grasshopper.Resources.Icons.plugs-connected-duotone.png";
+                using (var stream = assembly.GetManifestResourceStream(resourceName))
+                {
+                    if (stream != null)
+                        return new System.Drawing.Bitmap(stream);
+                }
+                return null;
+            }
+        }
+
         public override Guid ComponentGuid => new Guid("d4282434-580b-4a8d-a306-7fa14c4a0955");
 
         protected override GH_GetterResult Prompt_Singular(ref URSessionGoo value)

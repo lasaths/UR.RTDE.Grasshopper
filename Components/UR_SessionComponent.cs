@@ -4,6 +4,8 @@ using Grasshopper.GUI;
 using Grasshopper.GUI.Canvas;
 using System.Drawing;
 using Grasshopper.Kernel.Attributes;
+using Rhino.Geometry;
+using Rhino.Display;
 
 namespace UR.RTDE.Grasshopper
 {
@@ -58,10 +60,15 @@ namespace UR.RTDE.Grasshopper
                 createdOrReconnected = true;
             }
 
+            bool isConnected = _session?.IsConnected ?? false;
             string status = createdOrReconnected ? "Session created" : "Session reused";
+            if (!isConnected)
+            {
+                status += " (not connected)";
+            }
 
             da.SetData(0, _session != null ? new URSessionGoo(_session) : null);
-            da.SetData(1, _session?.IsConnected ?? false);
+            da.SetData(1, isConnected);
             da.SetData(2, status);
             da.SetData(3, _session?.LastError ?? string.Empty);
         }
@@ -76,7 +83,7 @@ namespace UR.RTDE.Grasshopper
             get
             {
                 var assembly = System.Reflection.Assembly.GetExecutingAssembly();
-                var resourceName = "UR.RTDE.Grasshopper.Resources.Icons.plug-duotone.png";
+                var resourceName = "UR.RTDE.Grasshopper.Resources.Icons.plugs-duotone.png";
                 using (var stream = assembly.GetManifestResourceStream(resourceName))
                 {
                     if (stream != null)
@@ -93,6 +100,37 @@ namespace UR.RTDE.Grasshopper
             base.RemovedFromDocument(document);
             _session?.Dispose();
             _session = null;
+        }
+
+        public override void DrawViewportWires(IGH_PreviewArgs args)
+        {
+            base.DrawViewportWires(args);
+
+            if (Locked || Hidden) return;
+
+            bool isConnected = _session?.IsConnected ?? false;
+
+            var origin = Point3d.Origin;
+            var size = 6;
+            var color = isConnected ? Color.FromArgb(0x10, 0xB9, 0x81) : Color.FromArgb(120, 120, 120);
+
+            args.Display.DrawPoint(origin, PointStyle.RoundSimple, size, color);
+
+            if (isConnected)
+            {
+                var text = new Text3d($"UR {(_currentIp ?? "")} connected", new Plane(origin + new Vector3d(0, 0, 50), Vector3d.ZAxis), 8);
+                args.Display.Draw3dText(text, color);
+                text.Dispose();
+            }
+        }
+
+        public override BoundingBox ClippingBox
+        {
+            get
+            {
+                var box = new BoundingBox(new Point3d(-100, -100, -100), new Point3d(100, 100, 100));
+                return box;
+            }
         }
     }
 }

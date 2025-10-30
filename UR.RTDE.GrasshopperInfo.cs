@@ -13,12 +13,12 @@ namespace UR.RTDE.Grasshopper
         public override Bitmap Icon => null;
 
         //Return a short string describing the purpose of this GHA library.
-        public override string Description => "Minimal Grasshopper components for UR RTDE: session, read, and command (MoveJ/MoveL/Stop/SetDO). Test with URSim first.";
+        public override string Description => "Grasshopper components to control Universal Robots via UR.RTDE (C# wrapper). Supports session management, reads (joints/pose/IO/modes), and basic commands.";
 
         public override Guid Id => new Guid("6d2ecd23-5f02-4314-9c8a-e5a5dc7a1c53");
 
         //Return a string identifying you or your company.
-        public override string AuthorName => "UR.RTDE.Grasshopper Authors";
+        public override string AuthorName => "lasaths";
 
         //Return a string representing your preferred contact details.
         public override string AuthorContact => "https://github.com/lasaths/UR.RTDE.Grasshopper";

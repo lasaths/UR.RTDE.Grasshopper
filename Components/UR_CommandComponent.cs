@@ -129,7 +129,7 @@ namespace UR.RTDE.Grasshopper
             get
             {
                 var assembly = System.Reflection.Assembly.GetExecutingAssembly();
-                var resourceName = "UR.RTDE.Grasshopper.Resources.Icons.play-duotone.png";
+                var resourceName = "UR.RTDE.Grasshopper.Resources.Icons.rocket-launch-duotone.png";
                 using (var stream = assembly.GetManifestResourceStream(resourceName))
                 {
                     if (stream != null)

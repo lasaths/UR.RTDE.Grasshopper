@@ -17,10 +17,16 @@
   
   <PropertyGroup>
     <!-- Specifies information for Assembly and Yak -->
-    <Version>1.0</Version>
+    <Version>0.1.2</Version>
+    <PackageId>UR.RTDE.Grasshopper</PackageId>
     <Title>UR.RTDE.Grasshopper</Title>
-    <Company>UR.RTDE.Grasshopper Authors</Company>
-    <Description>Description of UR.RTDE.Grasshopper</Description>
+    <Company>UR.RTDE</Company>
+    <Authors>lasaths</Authors>
+    <Description>Grasshopper components to control Universal Robots via UR.RTDE (C# wrapper). Supports session management, reads (joints/pose/IO/modes), and basic commands.</Description>
+    <PackageTags>Rhino;Rhino8;Grasshopper;Grasshopper8;Universal Robots;UR;UR5;UR10;UR20;RTDE;Robotics</PackageTags>
+    <PackageProjectUrl>https://www.nuget.org/packages/UR.RTDE/</PackageProjectUrl>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <Product>UR.RTDE.Grasshopper</Product>
     <!-- Build Yak package by default when Yak is available -->
     <BuildYakPackage Condition="'$(BuildYakPackage)' == ''">True</BuildYakPackage>
   </PropertyGroup>
@@ -85,6 +91,15 @@
     <Reference Include="$(PkgMicrosoft_NETFramework_ReferenceAssemblies_net48)\build\.NETFramework\v4.8\System.Windows.Forms.dll" Private="False" />
     <PackageReference Include="System.Drawing.Common" Version="7.0.0" ExcludeAssets="runtime" />
   </ItemGroup>
+
+  <!-- Copy icon to output directory for yak packaging -->
+  <Target Name="CopyYakIcon" BeforeTargets="BuildYakPackage" Condition="$(BuildYakPackage) == 'True'">
+    <PropertyGroup>
+      <IconSource>$(MSBuildThisFileDirectory)Resources\Icons\robot-duotone.png</IconSource>
+      <IconDestination>$(OutputPath)robot-duotone.png</IconDestination>
+    </PropertyGroup>
+    <Copy SourceFiles="$(IconSource)" DestinationFiles="$(IconDestination)" Condition="Exists('$(IconSource)')" SkipUnchangedFiles="true" />
+  </Target>
 
   <Target Name="BuildYakPackage" AfterTargets="DispatchToInnerBuilds">
     <PropertyGroup>

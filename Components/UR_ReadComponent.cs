@@ -11,6 +11,8 @@ namespace UR.RTDE.Grasshopper
     public class UR_ReadComponent : GH_Component
     {
         private URReadKind _kind = URReadKind.Joints;
+        private bool _autoListen = false;
+        private int _autoIntervalMs = 100;
 
         public UR_ReadComponent()
           : base("UR Read", "URRead",
@@ -111,6 +113,13 @@ namespace UR.RTDE.Grasshopper
                 da.SetData(0, null);
                 da.SetData(1, ex.Message);
             }
+
+            if (_autoListen)
+            {
+                var doc = OnPingDocument();
+                if (doc != null)
+                    doc.ScheduleSolution(_autoIntervalMs, d => ExpireSolution(true));
+            }
         }
 
         protected override System.Drawing.Bitmap Icon
@@ -118,7 +127,7 @@ namespace UR.RTDE.Grasshopper
             get
             {
                 var assembly = System.Reflection.Assembly.GetExecutingAssembly();
-                var resourceName = "UR.RTDE.Grasshopper.Resources.Icons.eye-duotone.png";
+                var resourceName = "UR.RTDE.Grasshopper.Resources.Icons.binoculars-duotone.png";
                 using (var stream = assembly.GetManifestResourceStream(resourceName))
                 {
                     if (stream != null)
@@ -136,6 +145,25 @@ namespace UR.RTDE.Grasshopper
             Menu_AppendItem(menu, "Read: Pose", (s, e) => { _kind = URReadKind.Pose; ExpireSolution(true); }, true, _kind == URReadKind.Pose);
             Menu_AppendItem(menu, "Read: IO", (s, e) => { _kind = URReadKind.IO; ExpireSolution(true); }, true, _kind == URReadKind.IO);
             Menu_AppendItem(menu, "Read: Modes", (s, e) => { _kind = URReadKind.Modes; ExpireSolution(true); }, true, _kind == URReadKind.Modes);
+
+            Menu_AppendSeparator(menu);
+            Menu_AppendItem(menu, "Auto listen (schedule reads)", (s, e) =>
+            {
+                _autoListen = !_autoListen;
+                ExpireSolution(true);
+            }, true, _autoListen);
+
+            var intervalRoot = Menu_AppendItem(menu, "Auto interval");
+            void addInterval(string label, int ms)
+            {
+                Menu_AppendItem(intervalRoot.DropDown, label, (s, e) => { _autoIntervalMs = ms; if (_autoListen) ExpireSolution(true); }, true, _autoIntervalMs == ms);
+            }
+            addInterval("20 ms", 20);
+            addInterval("50 ms", 50);
+            addInterval("100 ms", 100);
+            addInterval("200 ms", 200);
+            addInterval("500 ms", 500);
+            addInterval("1000 ms", 1000);
         }
 
         private static string MapRobotMode(int mode)
@@ -172,6 +200,22 @@ namespace UR.RTDE.Grasshopper
                 case 11: return "ThreePositionEnablingStop";
                 default: return "Unknown";
             }
+        }
+
+        public override bool Write(GH_IO.Serialization.GH_IWriter writer)
+        {
+            writer.SetInt32("kind", (int)_kind);
+            writer.SetBoolean("auto", _autoListen);
+            writer.SetInt32("interval", _autoIntervalMs);
+            return base.Write(writer);
+        }
+
+        public override bool Read(GH_IO.Serialization.GH_IReader reader)
+        {
+            if (reader.ItemExists("kind")) _kind = (URReadKind)reader.GetInt32("kind");
+            if (reader.ItemExists("auto")) _autoListen = reader.GetBoolean("auto");
+            if (reader.ItemExists("interval")) _autoIntervalMs = reader.GetInt32("interval");
+            return base.Read(reader);
         }
     }
 }
