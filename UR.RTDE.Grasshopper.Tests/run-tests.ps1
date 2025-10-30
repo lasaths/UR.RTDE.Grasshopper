@@ -18,12 +18,7 @@ if ($LASTEXITCODE -eq 0) {
     dotnet build UR.RTDE.Grasshopper.Tests/UR.RTDE.Grasshopper.Tests.csproj 2>&1 | Select-String -Pattern "error CS" | Select-Object -First 5
 }
 
-Write-Host "`nTest Status:"
-Write-Host "- SimpleTests: ✅ Working (4 tests)"
-Write-Host "- MoveJ Tests: ✅ Working (2 tests)"
-Write-Host "- MoveL Tests: ✅ Working (2 tests)"
-Write-Host "- PoseUtilsTests: ❌ Requires Rhino dependencies"
-Write-Host "- URSessionTests: ✅ Working (16 tests)"
 Write-Host "`nTo run specific tests:"
 Write-Host "  dotnet test UR.RTDE.Grasshopper.Tests/UR.RTDE.Grasshopper.Tests.csproj --filter TestMoveJ"
 Write-Host "  dotnet test UR.RTDE.Grasshopper.Tests/UR.RTDE.Grasshopper.Tests.csproj --filter SimpleTests"
+Write-Host "  dotnet test UR.RTDE.Grasshopper.Tests/UR.RTDE.Grasshopper.Tests.csproj --filter PoseUtilsTests"
