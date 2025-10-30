@@ -1,125 +1,222 @@
-UR.RTDE.Grasshopper
-===================
+# UR.RTDE.Grasshopper
 
-A minimal Grasshopper (Rhino) plugin scaffold intended to integrate the `UR.RTDE` C# wrapper for Universal Robots RTDE.
+[![Yak Package](https://img.shields.io/badge/yak-UR--RTDE--Grasshopper-blue)](https://yak.rhino3d.com/packages/UR-RTDE-Grasshopper)
+[![Version](https://img.shields.io/badge/version-0.1.2-blue)](https://yak.rhino3d.com/packages/UR-RTDE-Grasshopper)
+[![Rhino](https://img.shields.io/badge/Rhino-8-green)](https://www.rhino3d.com/)
+[![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-Disclaimer
-----------
-This codebase was built with assistance from AI tools. It is provided “AS IS”, without warranty of any kind, express or implied. The authors and contributors assume no liability for any damages or consequences arising from its use. Use at your own risk, validate in simulation (URSim) first, and follow all applicable safety procedures.
+Grasshopper components to control Universal Robots via UR.RTDE (C# wrapper). Supports session management, reads (joints/pose/IO/modes), and basic commands.
 
-Links
------
-- NuGet package: [UR.RTDE](https://www.nuget.org/packages/UR.RTDE/#readme-body-tab)
-- ur_rtde C++ library docs: [SDU Robotics ur_rtde](https://sdurobotics.gitlab.io/ur_rtde/)
+## Installation
 
-Status
-------
-- Targets: `net48`, `net7.0`, `net7.0-windows` (see `UR.RTDE.Grasshopper.csproj`).
-- Rhino 7: use `net48`. Rhino 8: use `net7.0` or `net7.0-windows`.
-- Uses `UR.RTDE` NuGet package only (no local project refs).
+### Via Rhino Package Manager (Recommended for Rhino 8)
 
-Install the UR.RTDE package
----------------------------
-- From NuGet.org:
-  - `dotnet add package UR.RTDE`
-  - Or add `<PackageReference Include="UR.RTDE" Version="1.0.0" />` to your project.
-- Package includes native dependencies; no external Python required.
+1. Open Rhino 8
+2. Go to **Tools** → **Package Manager** (or press `Ctrl+Shift+P`)
+3. Search for **UR-RTDE-Grasshopper**
+4. Click **Install**
 
-Build
------
-1. Open `UR.RTDE.Grasshopper.sln` in Visual Studio 2022.
-2. Select the desired configuration and target framework.
-3. Build. The `.gha` outputs under `bin/<Configuration>/<TargetFramework>/`.
+The Rhino Package Manager is the easiest way to install and manage the package.
 
-Yak packaging
--------------
-- Yak packaging runs by default when Yak is available.
-- Default discovery paths:
-  - Windows: `C:\\Program Files\\Rhino 8\\System\\Yak.exe`
-  - macOS: `/Applications/Rhino 8.app/Contents/Resources/bin/yak`
-- If Yak is installed elsewhere, provide the path at build time:
-  - `dotnet build -c Release -f net7.0-windows -p:YakExecutable="C:\\Path\\To\\Yak.exe"`
-- To disable Yak packaging for a build: `-p:BuildYakPackage=false`
+### Via Yak Command Line
 
-Yak quickstart (Rhino 8)
-------------------------
-- Build a release for Rhino 8 Windows and generate a Yak package:
-  - `dotnet build -c Release -f net7.0-windows`
-- Find the output `.yak` and `manifest.yml` in `bin/Release/net7.0-windows/`.
-- Install the package for your user profile:
-  - `"C:\\Program Files\\Rhino 8\\System\\Yak.exe" install --source bin/Release/net7.0-windows .`
-  - Or copy the built `.gha` directly (see below) if you prefer not to use Yak.
+Alternatively, you can install via the command line:
 
-Install into Grasshopper
-------------------------
-- Copy the built `.gha` file to your Grasshopper Libraries folder:
-  - Windows: `%AppData%\Grasshopper\Libraries`
-- Alternatively, for Rhino 8, you can package with Yak (the csproj includes a helper target to generate a spec and build in the output directory if Yak is found).
+```bash
+yak install UR-RTDE-Grasshopper
+```
 
-Notes
------
-- Targets: `net48` (Rhino 7), `net7.0`/`net7.0-windows` (Rhino 8). Choose the framework that matches your Rhino.
-- The generated Yak manifest pulls metadata (name, version, authors, description, tags) from the project file.
+### Manual Installation
 
-Components
-----------
-- UR Session
-  - Inputs: `ip` (optional, defaults to `127.0.0.1`), `timeout_ms` (optional, defaults to `2000`), `reconnect` (optional, defaults to `false`)
-  - Outputs: `session`, `is_connected`, `status`, `last_error`
-  - Visual indicator: Shows connection status in the viewport (green point when connected)
-- UR Read (context menu: Joints, Pose, IO, Modes)
-  - Auto listen: enable from context menu to schedule periodic reads without a GH Timer
-    - Toggle: "Auto listen (schedule reads)"
-    - Interval presets: 20, 50, 100, 200, 500, 1000 ms (context submenu "Auto interval")
-  - Joints: outputs DataTree with `[q0..q5]` (rad)
-  - Pose: outputs a Plane (converted from TCP pose `[x,y,z,rx,ry,rz]` in m, rad)
-  - IO: DataTree
-    - `{0}`: `din[0..17]` as bools
-    - `{1}`: `dout[0..17]` as bools
-    - `{2}`: `[ai0, ai1, ao0, ao1]`
-  - Modes: DataTree
-    - `{0}`: robot mode label+code
-    - `{1}`: safety mode label+code
-    - `{2}`: program running (bool)
-- UR Command (context menu: MoveJ, MoveL, StopJ, StopL, SetDO)
-  - MoveJ: inputs `q[6]` (joint angles in rad, required), `speed` (default `1.05`), `accel` (default `1.4`), `async` (default `false`)
-  - MoveL: inputs `pose[6]` (optional, `[x,y,z,rx,ry,rz]` in m, rad), `target` (optional Plane, alternative to pose), `speed` (default `0.25`), `accel` (default `1.2`), `async` (default `false`)
-  - StopJ/StopL: input `decel` (default `2.0`, required)
-  - SetDO: inputs `pin` (required), `value` (required bool)
+Copy the built `.gha` file to your Grasshopper Libraries folder:
+- **Windows**: `%AppData%\Grasshopper\Libraries`
 
-Safety and Testing
-------------------
-- Test with URSim first (e‑Series ≥ 5.23.0 recommended) before real hardware.
-- Follow your organization’s safety procedures.
+## Quick Start
 
-URSim via Docker (e‑Series)
----------------------------
-- Image: `universalrobots/ursim_e-series` (see Docker Hub: [URSim e‑series](https://hub.docker.com/r/universalrobots/ursim_e-series))
-- Requirements: Docker Desktop installed and running.
-- Pull the image:
-  - `docker pull universalrobots/ursim_e-series`
-- Run the container (noVNC on 6080, Dashboard 29999, RTDE 30004, plus common ports):
-  - `docker run --rm --name ursim -p 6080:6080 -p 29999:29999 -p 30001-30004:30001-30004 universalrobots/ursim_e-series`
-- Open the simulator UI in your browser:
-  - `http://localhost:6080`
-- Connect the Grasshopper `UR Session` component:
-  - Set `ip` to `127.0.0.1` (localhost) when URSim is running on your machine via Docker.
-  - If URSim runs on another computer, use that host's IP instead of localhost.
-  - For a real robot, use the robot's IP address.
-  - RTDE port is typically `30004` (handled by the library; just provide IP in this component).
-- Notes:
-  - For reading state, URSim can be idle. For motion commands, ensure the robot is in "Remote Control" and the program is started/unpaused inside PolyScope.
-  - If ports are busy, adjust the `-p` mappings accordingly.
-  - Use e‑Series images ≥ 5.23 for best compatibility.
+1. **Connect to your robot** using the `UR Session` component
+   - Set the robot's IP address (default: `127.0.0.1` for URSim)
+   - Click "Connect" to establish the RTDE connection
 
-License
--------
-MIT
+2. **Read robot state** with the `UR Read` component
+   - Use the context menu to select: Joints, Pose, IO, or Modes
+   - Enable "Auto listen" for periodic updates without a Timer
 
-Credits
--------
-- Built for use with the `UR.RTDE` NuGet package (native C++ P/Invoke wrapper).
-- Underlying C++ library: `ur_rtde` by SDU Robotics. See docs linked above.
-- Icons: Phosphor Icons (https://phosphoricons.com), MIT License. Duotone is the primary style.
+3. **Send commands** with the `UR Command` component
+   - Use context menu: MoveJ, MoveL, StopJ, StopL, or SetDO
+   - Configure speed, acceleration, and other parameters
 
+**⚠️ Important**: Always test with URSim first before connecting to real hardware!
 
+## Components
+
+### UR Session
+Manages the RTDE connection to the Universal Robot.
+
+**Inputs:**
+- `ip` - Robot IP address (optional, defaults to `127.0.0.1`)
+- `timeout_ms` - Connection timeout in milliseconds (optional, defaults to `2000`)
+- `reconnect` - Auto-reconnect on disconnect (optional, defaults to `false`)
+
+**Outputs:**
+- `session` - Session object for use with other components
+- `is_connected` - Connection status (boolean)
+- `status` - Connection status message
+- `last_error` - Last error message if any
+
+**Features:**
+- Visual connection indicator (green point when connected)
+- Connect/Disconnect button on the component
+
+### UR Read
+Reads robot state data from the robot.
+
+**Context Menu Options:**
+- **Joints** - Read joint angles `[q0..q5]` (radians)
+- **Pose** - Read TCP pose as a Plane (converted from `[x,y,z,rx,ry,rz]` in m, rad)
+- **IO** - Read digital/analog IO states
+  - `{0}`: Digital inputs `din[0..17]` (bools)
+  - `{1}`: Digital outputs `dout[0..17]` (bools)
+  - `{2}`: Analog IO `[ai0, ai1, ao0, ao1]`
+- **Modes** - Read robot and safety modes
+  - `{0}`: Robot mode (label + code)
+  - `{1}`: Safety mode (label + code)
+  - `{2}`: Program running (bool)
+
+**Auto Listen Feature:**
+- Enable from context menu: "Auto listen (schedule reads)"
+- Interval presets: 20, 50, 100, 200, 500, 1000 ms
+- Automatically schedules periodic reads without a Grasshopper Timer
+
+### UR Command
+Sends commands to the robot.
+
+**Context Menu Options:**
+- **MoveJ** - Joint space movement
+  - `q[6]` - Joint angles in radians (required)
+  - `speed` - Speed factor (default: `1.05`)
+  - `accel` - Acceleration factor (default: `1.4`)
+  - `async` - Asynchronous execution (default: `false`)
+
+- **MoveL** - Linear movement
+  - `pose[6]` - TCP pose `[x,y,z,rx,ry,rz]` in m, rad (optional)
+  - `target` - Plane target (alternative to pose)
+  - `speed` - Speed in m/s (default: `0.25`)
+  - `accel` - Acceleration in m/s² (default: `1.2`)
+  - `async` - Asynchronous execution (default: `false`)
+
+- **StopJ/StopL** - Stop movement
+  - `decel` - Deceleration factor (default: `2.0`, required)
+
+- **SetDO** - Set digital output
+  - `pin` - Pin number (required)
+  - `value` - Boolean value (required)
+
+## Testing with URSim
+
+Before connecting to a real robot, always test with URSim.
+
+### URSim via Docker (e‑Series)
+
+**Requirements:**
+- Docker Desktop installed and running
+
+**Setup:**
+
+1. Pull the URSim image:
+   ```bash
+   docker pull universalrobots/ursim_e-series
+   ```
+
+2. Run the container:
+   ```bash
+   docker run --rm --name ursim -p 6080:6080 -p 29999:29999 -p 30001-30004:30001-30004 universalrobots/ursim_e-series
+   ```
+
+3. Open the simulator UI in your browser:
+   - `http://localhost:6080`
+
+4. Connect from Grasshopper:
+   - Set `ip` to `127.0.0.1` (localhost)
+   - For URSim on another computer, use that host's IP
+   - RTDE port `30004` is handled automatically
+
+**Important Notes:**
+- For reading state, URSim can be idle
+- For motion commands, ensure robot is in "Remote Control" and program is started/unpaused in PolyScope
+- Use e‑Series images ≥ 5.23.0 for best compatibility
+- Adjust port mappings if ports are busy
+
+## Building from Source
+
+### Prerequisites
+- Visual Studio 2022 or later
+- .NET SDK 7.0 or later
+- Rhino 8 (for yak packaging)
+
+### Build Steps
+
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/lasaths/UR.RTDE.Grasshopper.git
+   cd UR.RTDE.Grasshopper
+   ```
+
+2. Restore dependencies:
+   ```bash
+   dotnet restore
+   ```
+
+3. Build:
+   ```bash
+   dotnet build -c Release
+   ```
+
+### Target Frameworks
+- **net48** - For Rhino 7
+- **net7.0** - For Rhino 8 (cross-platform)
+- **net7.0-windows** - For Rhino 8 (Windows, recommended)
+
+The `.gha` files are output to `bin/Release/<TargetFramework>/`.
+
+### Yak Packaging
+
+Yak packaging runs automatically when Yak is available. The package is built to `bin/Release/net7.0-windows/`.
+
+**Custom Yak Path:**
+```bash
+dotnet build -c Release -f net7.0-windows -p:YakExecutable="C:\Path\To\Yak.exe"
+```
+
+**Disable Yak Packaging:**
+```bash
+dotnet build -p:BuildYakPackage=false
+```
+
+## Safety
+
+⚠️ **Critical Safety Warning**
+
+- **Always test with URSim first** before connecting to real hardware
+- This plugin controls industrial robots that can cause serious injury
+- Follow all safety procedures defined by your organization
+- Ensure emergency stop procedures are in place
+- The authors assume no liability for damages or injuries
+
+This codebase was built with assistance from AI tools. It is provided "AS IS", without warranty of any kind, express or implied. Use at your own risk.
+
+## Links
+
+- **NuGet Package**: [UR.RTDE](https://www.nuget.org/packages/UR.RTDE/#readme-body-tab)
+- **C++ Library Docs**: [SDU Robotics ur_rtde](https://sdurobotics.gitlab.io/ur_rtde/)
+- **Yak Package**: [UR-RTDE-Grasshopper on Yak](https://yak.rhino3d.com/packages/UR-RTDE-Grasshopper)
+- **GitHub Repository**: [lasaths/UR.RTDE.Grasshopper](https://github.com/lasaths/UR.RTDE.Grasshopper)
+
+## License
+
+MIT License - see [LICENSE](LICENSE) file for details.
+
+## Credits
+
+- Built for use with the `UR.RTDE` NuGet package (native C++ P/Invoke wrapper)
+- Underlying C++ library: `ur_rtde` by SDU Robotics
+- Icons: [Phosphor Icons](https://phosphoricons.com) (MIT License, Duotone style)
