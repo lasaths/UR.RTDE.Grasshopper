@@ -1,9 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.Threading;
-using System.Windows.Forms;
 using Grasshopper.Kernel;
 using Grasshopper.Kernel.Parameters;
+using UR.RTDE;
 
 namespace UR.RTDE.Grasshopper
 {
@@ -11,7 +11,7 @@ namespace UR.RTDE.Grasshopper
 
     public class UR_RobotiqGripperComponent : GH_Component
     {
-        private readonly Dictionary<string, UR.RTDE.RobotiqGripper> _gripperCache = new Dictionary<string, UR.RTDE.RobotiqGripper>();
+        private readonly Dictionary<string, RobotiqGripper> _gripperCache = new Dictionary<string, RobotiqGripper>();
 
         public UR_RobotiqGripperComponent()
           : base("UR Robotiq Gripper", "URGripper",
@@ -167,9 +167,9 @@ namespace UR.RTDE.Grasshopper
             }
         }
 
-        private UR.RTDE.RobotiqGripper GetOrCreateGripper(string ip)
+        private RobotiqGripper GetOrCreateGripper(string ip)
         {
-            if (string.IsNullOrEmpty(ip)) return null;
+            if (string.IsNullOrWhiteSpace(ip)) return null;
 
             lock (_gripperCache)
             {
@@ -177,7 +177,7 @@ namespace UR.RTDE.Grasshopper
                 {
                     try
                     {
-                        gripper = new UR.RTDE.RobotiqGripper(ip, 30002);
+                        gripper = new RobotiqGripper(ip, 30002);
                         _gripperCache[ip] = gripper;
                     }
                     catch
@@ -212,15 +212,6 @@ namespace UR.RTDE.Grasshopper
             RebuildInputsForCommand();
         }
 
-        protected override void OnParameterChanged(GH_ParamServer sender)
-        {
-            base.OnParameterChanged(sender);
-            if (sender == Params.Input[1]) // Command parameter changed
-            {
-                RebuildInputsForCommand();
-            }
-        }
-
         private void RebuildInputsForCommand()
         {
             if (Params == null) return;
@@ -242,7 +233,7 @@ namespace UR.RTDE.Grasshopper
                     try
                     {
                         var value = cmdParam.VolatileData.get_Branch(0)[0];
-                        if (value is Grasshopper.Kernel.Types.GH_Integer ghInt)
+                        if (value is global::Grasshopper.Kernel.Types.GH_Integer ghInt)
                             commandIndex = ghInt.Value;
                     }
                     catch { }
@@ -285,56 +276,8 @@ namespace UR.RTDE.Grasshopper
             ExpireSolution(true);
         }
 
-        protected override void SolveInstance(IGH_DataAccess da)
-        {
-            URSessionGoo goo = null;
-            if (!da.GetData(0, ref goo)) return;
-            var session = goo?.Value;
-            if (session == null || !session.IsConnected)
-            {
-                da.SetData(0, false);
-                da.SetData(1, "Session not connected");
-                return;
-            }
-
-            int commandIndex = 1; // Default to "Open"
-            if (!da.GetData(1, ref commandIndex))
-            {
-                da.SetData(0, false);
-                da.SetData(1, "Command required");
-                return;
-            }
-
-            if (commandIndex < 0 || commandIndex > 5)
-            {
-                da.SetData(0, false);
-                da.SetData(1, $"Invalid command index: {commandIndex}. Must be 0-5.");
-                return;
-            }
-
-            var action = (RobotiqActionKind)commandIndex;
-
-            try
-            {
-                var gripper = GetOrCreateGripper(session.Ip);
-                if (gripper == null)
-                {
-                    da.SetData(0, false);
-                    da.SetData(1, "Failed to create RobotiqGripper instance");
-                    return;
-                }
-
-                // Ensure connected
-                if (!gripper.IsConnected)
-                {
-                    gripper.ConnectAsync(3000, CancellationToken.None).GetAwaiter().GetResult();
-                }
-
-                switch (action)
-
         public override void RemovedFromDocument(GH_Document document)
         {
-            // Clean up cached grippers
             lock (_gripperCache)
             {
                 foreach (var gripper in _gripperCache.Values)
@@ -347,4 +290,3 @@ namespace UR.RTDE.Grasshopper
         }
     }
 }
-

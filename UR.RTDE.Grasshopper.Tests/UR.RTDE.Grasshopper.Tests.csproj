@@ -11,7 +11,7 @@
     <PackageReference Include="NUnit3TestAdapter" Version="4.6.0" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
     <PackageReference Include="Rhino.Testing" Version="9.0.0-beta" />
-    <PackageReference Include="UR.RTDE" Version="1.0.0" />
+    <PackageReference Include="UR.RTDE" Version="1.1.0" />
   </ItemGroup>
   
   <ItemGroup>

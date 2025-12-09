@@ -7,6 +7,7 @@ using Grasshopper.Kernel;
 using Grasshopper.Kernel.Attributes;
 using Grasshopper.Kernel.Parameters;
 using Grasshopper.GUI.Canvas;
+using Grasshopper.GUI;
 
 namespace UR.RTDE.Grasshopper
 {
@@ -204,21 +205,15 @@ namespace UR.RTDE.Grasshopper
             for (int i = 0; i < commands.Length; i++)
             {
                 int index = i; // Capture for closure
-                var item = menu.Items.Add(commands[i]);
+                var item = menu.Items.Add(commands[i]) as ToolStripMenuItem;
                 item.Click += (s, e) =>
                 {
                     _owner.SelectedIndex = index;
                     Owner.OnDisplayExpired(false);
                 };
-                if (i == _owner.SelectedIndex)
+                if (item != null && i == _owner.SelectedIndex)
                     item.Checked = true;
             }
-
-            var screenPoint = Owner.Attributes.Pivot;
-            var viewport = Instances.ActiveCanvas.Viewport;
-            var worldPoint = viewport.ClientToWorld(screenPoint);
-            var clientPoint = viewport.WorldToClient(worldPoint);
-            var canvasPoint = Instances.ActiveCanvas.Viewport.ScreenToClient(clientPoint);
 
             menu.Show(Instances.ActiveCanvas, new System.Drawing.Point(
                 (int)(_dropdownBounds.X + _dropdownBounds.Width),
@@ -251,4 +246,3 @@ namespace UR.RTDE.Grasshopper
         }
     }
 }
-

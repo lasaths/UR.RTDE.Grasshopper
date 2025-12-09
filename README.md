@@ -47,6 +47,67 @@ Copy the built `.gha` file to your Grasshopper Libraries folder:
 
 **⚠️ Important**: Always test with URSim first before connecting to real hardware!
 
+## Component Connections
+
+The following diagram shows how the components connect together in a typical workflow:
+
+```mermaid
+flowchart TB
+    subgraph Inputs["📥 Configuration Inputs"]
+        IP["`**IP**<br/>Text<br/>Default: 127.0.0.1`"]
+        Timeout["`**Timeout**<br/>Integer (ms)<br/>Default: 2000`"]
+        Reconnect["`**Reconnect**<br/>Boolean<br/>Default: false`"]
+    end
+    
+    subgraph SessionGroup["🔌 UR Session Component"]
+        Session["`**UR Session**<br/>━━━━━━━━━━━━━━━━<br/>**Outputs:**<br/>📤 Session (URSession)<br/>📊 Connected (Boolean)<br/>📝 Status (Text)<br/>⚠️ Last Error (Text)`"]
+    end
+    
+    subgraph ReadGroup["👁️ UR Read Component"]
+        Read["`**UR Read**<br/>━━━━━━━━━━━━━━━━<br/>**Input:**<br/>📥 Session (URSession)<br/>━━━━━━━━━━━━━━━━<br/>**Outputs:**<br/>📤 Data (varies by mode)<br/>📝 Message (Text)<br/>━━━━━━━━━━━━━━━━<br/>**Read Modes:**<br/>• Joints → 6 numbers<br/>• Pose → Plane<br/>• IO → Tree<br/>• Modes → Tree`"]
+    end
+    
+    subgraph CommandGroup["🚀 UR Command Component"]
+        Command["`**UR Command**<br/>(MoveJ example)<br/>━━━━━━━━━━━━━━━━<br/>**Inputs:**<br/>📥 Session (URSession)<br/>📥 Joints [6] ⚠️ required<br/>📥 Speed (optional)<br/>📥 Acceleration (optional)<br/>📥 Async (optional)<br/>📥 Sequential (optional)<br/>📥 Stop on Error (optional)<br/>━━━━━━━━━━━━━━━━<br/>**Outputs:**<br/>✅ OK (Boolean)<br/>📝 Message (Text)`"]
+    end
+    
+    subgraph CommandInputs["📥 Command Parameters"]
+        Joints["`**Joints**<br/>6 numbers (rad)<br/>[q0, q1, q2, q3, q4, q5]`"]
+        Speed["`**Speed**<br/>Number<br/>Default: 1.05`"]
+        Accel["`**Acceleration**<br/>Number<br/>Default: 1.4`"]
+    end
+    
+    %% Connections
+    IP --> Session
+    Timeout --> Session
+    Reconnect --> Session
+    
+    Session -->|"Session"| Read
+    Session -->|"Session"| Command
+    
+    Joints --> Command
+    Speed --> Command
+    Accel --> Command
+    
+    %% Styling
+    classDef inputStyle fill:#e3f2fd,stroke:#1976d2,stroke-width:2px,color:#000
+    classDef componentStyle fill:#fff3e0,stroke:#f57c00,stroke-width:3px,color:#000
+    classDef sessionStyle fill:#e8f5e9,stroke:#388e3c,stroke-width:3px,color:#000
+    classDef subgraphStyle fill:#f5f5f5,stroke:#757575,stroke-width:2px
+    
+    class IP,Timeout,Reconnect,Joints,Speed,Accel inputStyle
+    class Read,Command componentStyle
+    class Session sessionStyle
+```
+
+**Typical Workflow:**
+1. Configure **UR Session** with robot IP address (and optional timeout/reconnect)
+2. Connect the **Session** output to both **UR Read** and **UR Command** components
+3. Use **UR Read** to monitor robot state (joints, pose, IO, or modes)
+4. Use **UR Command** to send movement or control commands to the robot
+
+**Note:** The **UR Command** component's inputs change dynamically based on the selected action (MoveJ, MoveL, StopJ, StopL, or SetDO). The diagram above shows the MoveJ configuration as an example.
+
 ## Components
 
 ### UR Session
@@ -132,8 +193,8 @@ Before connecting to a real robot, always test with URSim.
    docker run --rm --name ursim -p 6080:6080 -p 29999:29999 -p 30001-30004:30001-30004 universalrobots/ursim_e-series
    ```
 
-3. Open the simulator UI in your browser:
-   - `http://localhost:6080`
+3. Open the simulator UI in your browser through VNC:
+   - `http://localhost:6080/vnc.html`
 
 4. Connect from Grasshopper:
    - Set `ip` to `127.0.0.1` (localhost)
