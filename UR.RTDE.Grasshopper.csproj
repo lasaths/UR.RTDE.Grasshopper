@@ -18,7 +18,6 @@
   <PropertyGroup>
     <!-- Specifies information for Assembly and Yak -->
     <Version>0.1.2</Version>
-    <URRTDEVersion>1.1.0</URRTDEVersion>
     <PackageId>UR.RTDE.Grasshopper</PackageId>
     <Title>UR.RTDE.Grasshopper</Title>
     <Company>UR.RTDE</Company>
@@ -41,7 +40,6 @@
   
   <ItemGroup>
     <PackageReference Include="Grasshopper" Version="8.0.23304.9001" ExcludeAssets="runtime" />
-    <PackageReference Include="GrasshopperAsyncComponent" Version="1.2.2" />
   </ItemGroup>
 
   <!-- Compile includes are wildcarded; moving files into subfolders is automatically picked up -->
@@ -58,14 +56,14 @@
 
   <!-- Use UR.RTDE via NuGet only -->
   <ItemGroup>
-    <PackageReference Include="UR.RTDE" Version="$(URRTDEVersion)" />
+    <PackageReference Include="UR.RTDE" Version="1.0.0" />
   </ItemGroup>
 
   <!-- Copy UR.RTDE.dll and native dependencies to output directory -->
   <Target Name="CopyURRTDEDependencies" AfterTargets="Build">
     <ItemGroup>
-      <URRTDEFiles Include="$(NuGetPackageRoot)ur.rtde\$(URRTDEVersion)\lib\$(TargetFramework)\UR.RTDE.dll" />
-      <URRTDENativeFiles Include="$(NuGetPackageRoot)ur.rtde\$(URRTDEVersion)\runtimes\**\*" />
+      <URRTDEFiles Include="$(NuGetPackageRoot)ur.rtde\1.0.0\lib\$(TargetFramework)\UR.RTDE.dll" />
+      <URRTDENativeFiles Include="$(NuGetPackageRoot)ur.rtde\1.0.0\runtimes\**\*" />
     </ItemGroup>
     
     <Copy SourceFiles="@(URRTDEFiles)" DestinationFolder="$(OutputPath)" Condition="Exists('%(URRTDEFiles.Identity)')" />
