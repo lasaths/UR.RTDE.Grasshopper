@@ -14,24 +14,29 @@ Test suite for the UR.RTDE.Grasshopper plugin using [Rhino.Testing](https://gith
 dotnet test
 ```
 
-Or use the provided script:
-```bash
-pwsh run-tests.ps1
-```
-
 ## Test Structure
 
-### Basic Tests
-- **SimpleTests.cs**: Basic functionality tests (math, strings, arrays, exceptions)
+### Component Tests
+- **CommandComponentTests.cs**: Tests for UR_CommandComponent (MoveJ, MoveL, StopJ, StopL, SetDO)
+- **ReadComponentTests.cs**: Tests for UR_ReadComponent (Joints, Pose, IO, Modes)
+- **SessionComponentTests.cs**: Tests for UR_SessionComponent
 
-### Runtime Tests
-- **URSessionTests.cs**: Tests for URSession class, connection handling, and command validation
+### Type Tests
+- **URSessionGooTests.cs**: Tests for URSessionGoo wrapper
+- **URSessionParamTests.cs**: Tests for URSessionParam
 
 ### Utility Tests
-- **PoseUtilsTests.cs**: Tests for coordinate transformation between Rhino Planes and UR poses (requires Rhino dependencies)
+- **PoseUtilsTests.cs**: Tests for coordinate transformation between Rhino Planes and UR poses
+
+### Runtime Tests
+- **URSessionTests.cs**: Tests for URSession class
+
+### Integration Tests
+- **IntegrationTests.cs**: End-to-end component tests
 
 ## Notes
 
 - Tests that require a connected robot will expect connection failures when no robot is available
 - Some tests verify input validation without actual robot connection
-- PoseUtilsTests require Rhino dependencies and may need special test configuration
+- All command types (MoveJ, MoveL, StopJ, StopL, SetDO) are tested
+- All read modes (Joints, Pose, IO, Modes) are tested
