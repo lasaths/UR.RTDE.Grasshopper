@@ -78,7 +78,15 @@ namespace UR.RTDE.Grasshopper
             lock (_lockObj)
             {
                 if (_control == null) throw new InvalidOperationException("Not connected");
-                return InvokeControlBool("MoveJ", new object[] { q, speed, acceleration, asynchronous });
+                bool result = InvokeControlBool("MoveJ", new object[] { q, speed, acceleration, asynchronous });
+                
+                // If synchronous, wait for the move to complete
+                if (!asynchronous && result)
+                {
+                    WaitForMoveComplete();
+                }
+                
+                return result;
             }
         }
 
@@ -106,7 +114,15 @@ namespace UR.RTDE.Grasshopper
             lock (_lockObj)
             {
                 if (_control == null) throw new InvalidOperationException("Not connected");
-                return InvokeControlBool("MoveL", new object[] { pose, speed, acceleration, asynchronous });
+                bool result = InvokeControlBool("MoveL", new object[] { pose, speed, acceleration, asynchronous });
+                
+                // If synchronous, wait for the move to complete
+                if (!asynchronous && result)
+                {
+                    WaitForMoveComplete();
+                }
+                
+                return result;
             }
         }
 
@@ -532,6 +548,49 @@ namespace UR.RTDE.Grasshopper
         {
             if (double.IsNaN(value) || double.IsInfinity(value)) value = 0;
             return (float)Math.Max(0, Math.Min(255, value));
+        }
+
+        /// <summary>
+        /// Waits for the robot to complete its current move by polling isSteady().
+        /// Must be called within lock.
+        /// </summary>
+        private void WaitForMoveComplete()
+        {
+            if (_receive == null) return;
+            
+            // Small delay to let the move start
+            Thread.Sleep(50);
+            
+            // Poll until robot is steady (not moving)
+            int maxAttempts = 6000; // 60 seconds max (10ms * 6000)
+            for (int i = 0; i < maxAttempts; i++)
+            {
+                try
+                {
+                    // Try to get robot velocity - if all velocities are near zero, we're done
+                    var velocities = InvokeReceive<double[]>(new[] { "GetActualQd" });
+                    if (velocities != null)
+                    {
+                        bool allStopped = true;
+                        foreach (var v in velocities)
+                        {
+                            if (Math.Abs(v) > 0.001) // Threshold for "stopped"
+                            {
+                                allStopped = false;
+                                break;
+                            }
+                        }
+                        if (allStopped)
+                            return;
+                    }
+                }
+                catch
+                {
+                    // If we can't read velocities, just wait a bit and hope
+                }
+                
+                Thread.Sleep(10);
+            }
         }
     }
 }

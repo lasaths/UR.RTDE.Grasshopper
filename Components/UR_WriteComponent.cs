@@ -50,7 +50,7 @@ namespace UR.RTDE.Grasshopper
 
         protected override void SolveInstance(IGH_DataAccess da)
         {
-            Message = $"{_action}";
+            //Message = $"{_action}";
             
             URSessionGoo goo = null;
             if (!da.GetData(0, ref goo))
