@@ -75,19 +75,21 @@ namespace UR.RTDE.Grasshopper
         public bool MoveJ(double[] q, double speed, double acceleration, bool asynchronous)
         {
             if (q == null || q.Length != 6) throw new ArgumentException("q must be length 6", nameof(q));
+            
+            bool result;
             lock (_lockObj)
             {
                 if (_control == null) throw new InvalidOperationException("Not connected");
-                bool result = InvokeControlBool("MoveJ", new object[] { q, speed, acceleration, asynchronous });
-                
-                // If synchronous, wait for the move to complete
-                if (!asynchronous && result)
-                {
-                    WaitForMoveComplete();
-                }
-                
-                return result;
+                result = InvokeControlBool("MoveJ", new object[] { q, speed, acceleration, asynchronous });
             }
+            
+            // If synchronous, wait for the move to complete (outside lock so reads can continue)
+            if (!asynchronous && result)
+            {
+                WaitForMoveComplete();
+            }
+            
+            return result;
         }
 
         public bool StopJ(double deceleration)
@@ -111,19 +113,21 @@ namespace UR.RTDE.Grasshopper
         public bool MoveL(double[] pose, double speed, double acceleration, bool asynchronous)
         {
             if (pose == null || pose.Length != 6) throw new ArgumentException("pose must be length 6", nameof(pose));
+            
+            bool result;
             lock (_lockObj)
             {
                 if (_control == null) throw new InvalidOperationException("Not connected");
-                bool result = InvokeControlBool("MoveL", new object[] { pose, speed, acceleration, asynchronous });
-                
-                // If synchronous, wait for the move to complete
-                if (!asynchronous && result)
-                {
-                    WaitForMoveComplete();
-                }
-                
-                return result;
+                result = InvokeControlBool("MoveL", new object[] { pose, speed, acceleration, asynchronous });
             }
+            
+            // If synchronous, wait for the move to complete (outside lock so reads can continue)
+            if (!asynchronous && result)
+            {
+                WaitForMoveComplete();
+            }
+            
+            return result;
         }
 
         public bool SetStandardDigitalOut(int pin, bool value)
@@ -552,12 +556,10 @@ namespace UR.RTDE.Grasshopper
 
         /// <summary>
         /// Waits for the robot to complete its current move.
-        /// Must be called within lock.
+        /// Called outside the lock so reads can continue during the wait.
         /// </summary>
         private void WaitForMoveComplete()
         {
-            if (_receive == null || _control == null) return;
-            
             // First, wait for the robot to start moving (velocity > threshold)
             // This prevents detecting "stopped" before the move even begins
             Thread.Sleep(100); // Give time for the move command to be processed
@@ -569,7 +571,13 @@ namespace UR.RTDE.Grasshopper
             {
                 try
                 {
-                    var velocities = InvokeReceive<double[]>(new[] { "GetActualQd" });
+                    double[] velocities = null;
+                    lock (_lockObj)
+                    {
+                        if (_receive == null) return;
+                        velocities = InvokeReceive<double[]>(new[] { "GetActualQd" });
+                    }
+                    
                     if (velocities != null)
                     {
                         foreach (var v in velocities)
@@ -601,7 +609,13 @@ namespace UR.RTDE.Grasshopper
             {
                 try
                 {
-                    var velocities = InvokeReceive<double[]>(new[] { "GetActualQd" });
+                    double[] velocities = null;
+                    lock (_lockObj)
+                    {
+                        if (_receive == null) return;
+                        velocities = InvokeReceive<double[]>(new[] { "GetActualQd" });
+                    }
+                    
                     if (velocities != null)
                     {
                         bool allStopped = true;
