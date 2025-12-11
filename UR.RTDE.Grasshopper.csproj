@@ -4,15 +4,16 @@
     <!-- Select the framework(s) you wish to target.
         Rhino 6: net45
         Rhino 7: net48
-        Rhino 8 Windows: net48, net7.0, net7.0-windows, net7.0-windows10.0.22000.0, etc
-        Rhino 8 Mac: net7.0, net7.0-macos, net7.0-macos12.0, etc
+        Rhino 8 Windows: net48, net8.0, net8.0-windows, net8.0-windows10.0.22000.0, etc
+        Rhino 8 Mac: net8.0, net8.0-macos, net8.0-macos12.0, etc
     -->
-    <TargetFrameworks>net7.0-windows;net7.0;net48</TargetFrameworks>
+    <TargetFrameworks>net8.0-windows;net8.0;net48</TargetFrameworks>
     <EnableDynamicLoading>true</EnableDynamicLoading>
     <TargetExt Condition="'$(Configuration)' != 'Test'">.gha</TargetExt>
     <TargetExt Condition="'$(Configuration)' == 'Test'">.dll</TargetExt>
     <NoWarn>NU1701;NETSDK1086</NoWarn>
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <LangVersion>latest</LangVersion>
   </PropertyGroup>
   
   <PropertyGroup>
@@ -29,6 +30,7 @@
     <Product>UR.RTDE.Grasshopper</Product>
     <!-- Build Yak package by default when Yak is available -->
     <BuildYakPackage Condition="'$(BuildYakPackage)' == ''">True</BuildYakPackage>
+    <URRTDEVersion>1.2.0</URRTDEVersion>
   </PropertyGroup>
 
   <!-- Allow test assembly to access internal members -->
@@ -56,14 +58,14 @@
 
   <!-- Use UR.RTDE via NuGet only -->
   <ItemGroup>
-    <PackageReference Include="UR.RTDE" Version="1.0.0" />
+    <PackageReference Include="UR.RTDE" Version="$(URRTDEVersion)" />
   </ItemGroup>
 
   <!-- Copy UR.RTDE.dll and native dependencies to output directory -->
   <Target Name="CopyURRTDEDependencies" AfterTargets="Build">
     <ItemGroup>
-      <URRTDEFiles Include="$(NuGetPackageRoot)ur.rtde\1.0.0\lib\$(TargetFramework)\UR.RTDE.dll" />
-      <URRTDENativeFiles Include="$(NuGetPackageRoot)ur.rtde\1.0.0\runtimes\**\*" />
+      <URRTDEFiles Include="$(NuGetPackageRoot)ur.rtde\$(URRTDEVersion)\lib\$(TargetFramework)\UR.RTDE.dll" />
+      <URRTDENativeFiles Include="$(NuGetPackageRoot)ur.rtde\$(URRTDEVersion)\runtimes\**\*" />
     </ItemGroup>
     
     <Copy SourceFiles="@(URRTDEFiles)" DestinationFolder="$(OutputPath)" Condition="Exists('%(URRTDEFiles.Identity)')" />
@@ -81,7 +83,7 @@
     <UseWindowsForms>true</UseWindowsForms>
   </PropertyGroup>
 
-  <!-- Reference WinForms for .NET 7.0 on macOS -->
+  <!-- Reference WinForms for .NET 8.0 on macOS -->
   <ItemGroup Condition="!($(TargetFramework.Contains('-windows')) or $(TargetFramework.StartsWith('net4')))">
     <!-- Rhino 8.11 and later you can use this -->
     <!-- <FrameworkReference Include="Microsoft.WindowsDesktop.App.WindowsForms" /> -->
@@ -89,7 +91,7 @@
     <!-- Rhino 8.10 and earlier -->
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies.net48" Version="1.0.3" ExcludeAssets="all" GeneratePathProperty="true" />
     <Reference Include="$(PkgMicrosoft_NETFramework_ReferenceAssemblies_net48)\build\.NETFramework\v4.8\System.Windows.Forms.dll" Private="False" />
-    <PackageReference Include="System.Drawing.Common" Version="7.0.0" ExcludeAssets="runtime" />
+    <PackageReference Include="System.Drawing.Common" Version="8.0.0" ExcludeAssets="runtime" />
   </ItemGroup>
 
   <!-- Copy icon to output directory for yak packaging -->
@@ -105,18 +107,19 @@
     <PropertyGroup>
       <YakExecutable Condition="$(YakExecutable) == '' and $([MSBuild]::IsOSPlatform(windows)) and Exists('C:\Program Files\Rhino 8\System\Yak.exe')">C:\Program Files\Rhino 8\System\Yak.exe</YakExecutable>
       <YakExecutable Condition="$(YakExecutable) == '' and $([MSBuild]::IsOSPlatform(macos)) and Exists('/Applications/Rhino 8.app/Contents/Resources/bin/yak')">/Applications/Rhino 8.app/Contents/Resources/bin/yak</YakExecutable>
+      <YakOutputPath>$(OutputPath)..\net48</YakOutputPath>
     </PropertyGroup>
     
     <Warning Text="Could not find Yak executable" Condition="$(YakExecutable) == ''" />
 
     <ItemGroup>
-      <YakPackagesToDelete Include="$(OutputPath)\*.yak;$(OutputPath)\**\manifest.yml" />
+      <YakPackagesToDelete Include="$(YakOutputPath)\*.yak;$(YakOutputPath)\**\manifest.yml" />
     </ItemGroup>
     
     <Delete Files="@(YakPackagesToDelete)" />
 
-    <Exec Command="&quot;$(YakExecutable)&quot; spec" WorkingDirectory="$(OutputPath)" Condition="$(BuildYakPackage) == 'True' and '$(YakExecutable)' != '' and Exists($(YakExecutable))" />
-    <Exec Command="&quot;$(YakExecutable)&quot; build" WorkingDirectory="$(OutputPath)" Condition="$(BuildYakPackage) == 'True' and '$(YakExecutable)' != '' and Exists($(YakExecutable))" />
+    <Exec Command="&quot;$(YakExecutable)&quot; spec" WorkingDirectory="$(YakOutputPath)" Condition="$(BuildYakPackage) == 'True' and '$(YakExecutable)' != '' and Exists($(YakExecutable)) and Exists($(YakOutputPath))" ContinueOnError="true" />
+    <Exec Command="&quot;$(YakExecutable)&quot; build" WorkingDirectory="$(YakOutputPath)" Condition="$(BuildYakPackage) == 'True' and '$(YakExecutable)' != '' and Exists($(YakExecutable)) and Exists($(YakOutputPath))" ContinueOnError="true" />
 
   </Target>
 
@@ -128,5 +131,19 @@
     </PropertyGroup>
     <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(IconScript)&quot;" Condition="$(DoIconGen) == 'True'" />
   </Target>
+
+  <Target Name="CopyToGrasshopperLibraries" AfterTargets="CopyURRTDEDependencies" Condition="'$(Configuration)' != 'Test'">
+  <PropertyGroup>
+    <GrasshopperLibraryFolder>$(APPDATA)\Grasshopper\Libraries\UR.RTDE.Grasshopper</GrasshopperLibraryFolder>
+  </PropertyGroup>
+  
+  <MakeDir Directories="$(GrasshopperLibraryFolder)" Condition="!Exists('$(GrasshopperLibraryFolder)')" />
+  
+  <ItemGroup>
+    <FilesToCopy Include="$(OutputPath)**\*.*" />
+  </ItemGroup>
+  
+  <Copy SourceFiles="@(FilesToCopy)" DestinationFiles="@(FilesToCopy->'$(GrasshopperLibraryFolder)\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+</Target>
 
 </Project>

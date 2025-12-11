@@ -22,6 +22,8 @@ namespace UR.RTDE.Grasshopper
         {
         }
 
+        public override GH_Exposure Exposure => GH_Exposure.primary;
+
         protected override void RegisterInputParams(GH_InputParamManager p)
         {
             p.AddTextParameter("IP", "I", "Robot IP address. Defaults to 127.0.0.1 (URSim)", GH_ParamAccess.item);
@@ -134,5 +136,4 @@ namespace UR.RTDE.Grasshopper
         }
     }
 }
-
 

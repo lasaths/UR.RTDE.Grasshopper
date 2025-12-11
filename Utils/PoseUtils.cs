@@ -1,4 +1,5 @@
 using System;
+using Rhino;
 using Rhino.Geometry;
 
 namespace UR.RTDE.Grasshopper
@@ -7,9 +8,11 @@ namespace UR.RTDE.Grasshopper
     {
         public static double[] PlaneToPose(Plane p)
         {
-            double x = p.OriginX;
-            double y = p.OriginY;
-            double z = p.OriginZ;
+            double scale = GetDocumentToMeterScale();
+
+            double x = p.OriginX * scale;
+            double y = p.OriginY * scale;
+            double z = p.OriginZ * scale;
 
             var m = new double[9]
             {
@@ -29,7 +32,8 @@ namespace UR.RTDE.Grasshopper
         public static Plane PoseToPlane(double[] pose)
         {
             if (pose == null || pose.Length != 6) throw new ArgumentException("pose must be length 6");
-            double x = pose[0], y = pose[1], z = pose[2];
+            double scale = GetMeterToDocumentScale();
+            double x = pose[0] * scale, y = pose[1] * scale, z = pose[2] * scale;
             double rx = pose[3], ry = pose[4], rz = pose[5];
 
             var angle = Math.Sqrt(rx * rx + ry * ry + rz * rz);
@@ -41,6 +45,28 @@ namespace UR.RTDE.Grasshopper
             var zAxis = new Vector3d(R[2], R[5], R[8]);
             var origin = new Point3d(x, y, z);
             return new Plane(origin, xAxis, yAxis);
+        }
+
+        private static double GetDocumentToMeterScale()
+        {
+            var unit = RhinoDoc.ActiveDoc?.ModelUnitSystem ?? UnitSystem.Meters;
+            return unit switch
+            {
+                UnitSystem.Meters => 1.0,
+                UnitSystem.Millimeters => 0.001,
+                _ => throw new InvalidOperationException($"Unsupported document unit '{unit}'. Set Rhino units to meters or millimeters.")
+            };
+        }
+
+        private static double GetMeterToDocumentScale()
+        {
+            var unit = RhinoDoc.ActiveDoc?.ModelUnitSystem ?? UnitSystem.Meters;
+            return unit switch
+            {
+                UnitSystem.Meters => 1.0,
+                UnitSystem.Millimeters => 1000.0,
+                _ => throw new InvalidOperationException($"Unsupported document unit '{unit}'. Set Rhino units to meters or millimeters.")
+            };
         }
 
         private static void AxisAngleFromRotationMatrix(double[] m, out Vector3d axis, out double angle)

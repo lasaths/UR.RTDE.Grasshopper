@@ -5,7 +5,27 @@
 [![Rhino](https://img.shields.io/badge/Rhino-8-green)](https://www.rhino3d.com/)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-Grasshopper components to control Universal Robots via UR.RTDE (C# wrapper). Supports session management, reads (joints/pose/IO/modes), and basic commands.
+Grasshopper components to control Universal Robots via UR.RTDE (C# wrapper). Supports session management, reads (joints/pose/IO/modes), basic commands, and Robotiq gripper control (URCap) via UR.RTDE 1.2.
+
+## ✨ New in 0.1.2: Enhanced Components
+
+The **UR Read** component now uses an **event-driven architecture** and **UR Command** has been simplified for better performance:
+
+### UR Read (Event-Driven)
+✅ **Non-blocking timer-based polling** - UI stays responsive  
+✅ **Efficient caching** - Background timer polls data, UI reads from cache  
+✅ **High-frequency updates** - Can handle 20-50ms intervals smoothly  
+✅ **No stuttering** - Consistent performance during auto-listen  
+
+### UR Command (Simplified)
+✅ **Direct execution** - Simple, straightforward command sending  
+✅ **Async option** - Fire-and-forget for non-blocking robot moves  
+✅ **Synchronous by default** - Immediate feedback on command completion  
+✅ **Clean & maintainable** - No complex async framework overhead  
+
+✅ **Fully backward compatible** - existing .gh files work without changes  
+
+> **Technical**: Both components use simple, proven patterns without heavy frameworks - event-driven polling for Read, direct execution with optional async for Command
 
 ## Installation
 
@@ -40,10 +60,12 @@ Copy the built `.gha` file to your Grasshopper Libraries folder:
 2. **Read robot state** with the `UR Read` component
    - Use the context menu to select: Joints, Pose, IO, or Modes
    - Enable "Auto listen" for periodic updates without a Timer
+   - **NEW**: Right-click → "Cancel" to stop operations
 
 3. **Send commands** with the `UR Command` component
    - Use context menu: MoveJ, MoveL, StopJ, StopL, or SetDO
    - Configure speed, acceleration, and other parameters
+   - **NEW**: Right-click → "Cancel" to abort commands mid-execution
 
 **⚠️ Important**: Always test with URSim first before connecting to real hardware!
 
@@ -67,8 +89,8 @@ Manages the RTDE connection to the Universal Robot.
 - Visual connection indicator (green point when connected)
 - Connect/Disconnect button on the component
 
-### UR Read
-Reads robot state data from the robot.
+### UR Read (Event-Driven ✨)
+Reads robot state data from the robot using **event-driven timer polling** for smooth, non-blocking updates.
 
 **Context Menu Options:**
 - **Joints** - Read joint angles `[q0..q5]` (radians)
@@ -85,24 +107,38 @@ Reads robot state data from the robot.
 **Auto Listen Feature:**
 - Enable from context menu: "Auto listen (schedule reads)"
 - Interval presets: 20, 50, 100, 200, 500, 1000 ms
+- **Event-driven architecture** - Background timer polls, UI reads from cache
+- **No blocking** - UI stays responsive at all intervals
 - Automatically schedules periodic reads without a Grasshopper Timer
 
-### UR Command
-Sends commands to the robot.
+**How It Works:**
+- When enabled, a background timer polls the robot at the specified interval
+- Read data is cached in a thread-safe manner
+- Component outputs the cached data without blocking
+- Similar to MQTT Subscribe pattern for efficient data streaming
+
+**Performance:**
+- Can handle 20ms intervals without stuttering
+- Minimal UI impact during polling
+- Multiple instances run independently
+- Clean start/stop behavior
+
+### UR Command (Simplified ✨)
+Sends commands to the robot using **direct execution** with optional async fire-and-forget.
 
 **Context Menu Options:**
 - **MoveJ** - Joint space movement
   - `q[6]` - Joint angles in radians (required)
   - `speed` - Speed factor (default: `1.05`)
   - `accel` - Acceleration factor (default: `1.4`)
-  - `async` - Asynchronous execution (default: `false`)
+  - `async` - Run asynchronously (fire-and-forget, default: `false`)
 
 - **MoveL** - Linear movement
   - `pose[6]` - TCP pose `[x,y,z,rx,ry,rz]` in m, rad (optional)
   - `target` - Plane target (alternative to pose)
   - `speed` - Speed in m/s (default: `0.25`)
   - `accel` - Acceleration in m/s² (default: `1.2`)
-  - `async` - Asynchronous execution (default: `false`)
+  - `async` - Run asynchronously (fire-and-forget, default: `false`)
 
 - **StopJ/StopL** - Stop movement
   - `decel` - Deceleration factor (default: `2.0`, required)
@@ -110,6 +146,70 @@ Sends commands to the robot.
 - **SetDO** - Set digital output
   - `pin` - Pin number (required)
   - `value` - Boolean value (required)
+
+**Execution Modes:**
+- **Synchronous (default)**: Blocks until command completes, provides immediate feedback
+- **Asynchronous (async=true)**: Sends command and returns immediately (fire-and-forget)
+
+**How It Works:**
+- Synchronous: Direct method call, waits for completion, returns result
+- Asynchronous: Fires `Task.Run` for non-blocking execution
+- Simple pattern inspired by MQTT Publish component
+- No complex async framework overhead
+
+**Performance:**
+- Minimal overhead for command execution
+- Clean separation of sync vs async behavior
+- Concurrent execution prevention
+- Immediate feedback for sync operations
+
+### UR Robotiq Gripper
+Controls Robotiq grippers (Robotiq URCap required) using the UR.RTDE 1.2 drivers.
+
+**Backends (menu):**
+- **Native** (port `63352`) - direct Robotiq driver with status codes
+- **RTDE bridge** - uses RTDE registers and installs the bridge script automatically
+- **URScript** (port `30002`) - calls `rq_*` URCap functions
+
+**Actions (menu):**
+- **Activate** - optional auto-calibration
+- **Open / Close** - speed/force (device units `0-255`), optional wait-for-motion for native
+- **Move** - position `0-255` (device units), plus speed/force and optional wait-for-motion
+
+**Common inputs:**
+- `install bridge` - only used for RTDE backend (default on)
+- `timeout_ms` - command timeout
+- `port` - only used for Native/URScript backends
+
+## Performance Tips
+
+### For Auto-Listen (UR Read)
+- **Real-time visualization**: 50-100ms
+- **Background monitoring**: 200-500ms
+- **Logging/recording**: 100-200ms
+- Cancel auto-listen when not needed to reduce network traffic
+
+### For Commands (UR Command)
+- Check the "OK" output to verify command success
+- Read the "Message" output for error details
+- Use cancellation for emergency stops
+
+## Troubleshooting
+
+### Component Not Responding
+- Try canceling the current operation (right-click → Cancel)
+- Check if the session is still connected
+- Verify network connectivity to the robot
+
+### Data Seems Delayed
+- This is normal for async operations
+- Check your auto-listen interval setting
+- Network latency may affect timing
+
+### Commands Not Executing
+- Verify the "OK" output is True
+- Read the "Message" output for error details
+- Check robot safety status and mode
 
 ## Testing with URSim
 
@@ -173,18 +273,18 @@ Before connecting to a real robot, always test with URSim.
 
 ### Target Frameworks
 - **net48** - For Rhino 7
-- **net7.0** - For Rhino 8 (cross-platform)
-- **net7.0-windows** - For Rhino 8 (Windows, recommended)
+- **net8.0** - For Rhino 8 (cross-platform)
+- **net8.0-windows** - For Rhino 8 (Windows, recommended)
 
 The `.gha` files are output to `bin/Release/<TargetFramework>/`.
 
 ### Yak Packaging
 
-Yak packaging runs automatically when Yak is available. The package is built to `bin/Release/net7.0-windows/`.
+Yak packaging runs automatically when Yak is available. The package is built to `bin/Release/net48/`.
 
 **Custom Yak Path:**
 ```bash
-dotnet build -c Release -f net7.0-windows -p:YakExecutable="C:\Path\To\Yak.exe"
+dotnet build -c Release -f net8.0-windows -p:YakExecutable="C:\Path\To\Yak.exe"
 ```
 
 **Disable Yak Packaging:**
@@ -204,10 +304,27 @@ dotnet build -p:BuildYakPackage=false
 
 This codebase was built with assistance from AI tools. It is provided "AS IS", without warranty of any kind, express or implied. Use at your own risk.
 
+## Migration from Previous Versions
+
+### Upgrading to 0.1.2 (Async Components)
+
+**Good News**: Fully backward compatible!
+
+- Existing `.gh` files work without modification
+- Component GUIDs unchanged
+- Input/output structure unchanged
+- All serialization compatible
+
+**What's Different**:
+- Operations are now non-blocking
+- New cancellation feature available
+- Better performance with auto-listen
+
 ## Links
 
 - **NuGet Package**: [UR.RTDE](https://www.nuget.org/packages/UR.RTDE/#readme-body-tab)
 - **C++ Library Docs**: [SDU Robotics ur_rtde](https://sdurobotics.gitlab.io/ur_rtde/)
+- **GrasshopperAsyncComponent**: [NuGet](https://www.nuget.org/packages/GrasshopperAsyncComponent) | [GitHub](https://github.com/specklesystems/GrasshopperAsyncComponent)
 - **Yak Package**: [UR-RTDE-Grasshopper on Yak](https://yak.rhino3d.com/packages/UR-RTDE-Grasshopper)
 - **GitHub Repository**: [lasaths/UR.RTDE.Grasshopper](https://github.com/lasaths/UR.RTDE.Grasshopper)
 
@@ -219,4 +336,5 @@ MIT License - see [LICENSE](LICENSE) file for details.
 
 - Built for use with the `UR.RTDE` NuGet package (native C++ P/Invoke wrapper)
 - Underlying C++ library: `ur_rtde` by SDU Robotics
+- Async framework: `GrasshopperAsyncComponent` by Speckle Systems
 - Icons: [Phosphor Icons](https://phosphoricons.com) (MIT License, Duotone style)

@@ -42,7 +42,7 @@ namespace UR.RTDE.Grasshopper
 
             var scale = GH_GraphicsUtil.UiScale <= 0 ? 1f : GH_GraphicsUtil.UiScale;
             var s = 4f / scale; // edge and internal spacing
-            var buttonHeight = 20f / scale;
+            var buttonHeight = 28f / scale; // Taller button to match other components
 
             var body = Bounds;
             var reservedHeight = buttonHeight + 4f * s;
