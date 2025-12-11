@@ -21,11 +21,9 @@ namespace UR.RTDE.Grasshopper
         internal bool _autoListen = false;
         internal int _autoIntervalMs = 100;
         
-        private readonly object _sessionLock = new object();
         private URSession _currentSession;
         private System.Threading.Timer _readTimer;
         private readonly object _lock = new object();
-        private int _timerRunning = 0;  // For preventing timer overlap
         
         private object _lastReadData;
         private string _lastMessage = "";
@@ -79,12 +77,8 @@ namespace UR.RTDE.Grasshopper
                 return;
             }
 
-            bool sessionChanged;
-            lock (_sessionLock)
-            {
-                sessionChanged = _currentSession != session;
-                _currentSession = session;
-            }
+            bool sessionChanged = _currentSession != session;
+            _currentSession = session;
 
             if (_autoListen)
             {
@@ -135,13 +129,7 @@ namespace UR.RTDE.Grasshopper
 
         private void PerformRead(IGH_DataAccess da)
         {
-            URSession session;
-            lock (_sessionLock)
-            {
-                session = _currentSession;
-            }
-            
-            if (session == null || !session.IsConnected)
+            if (_currentSession == null || !_currentSession.IsConnected)
             {
                 da.SetData(0, null);
                 da.SetData(1, "Session not connected");
@@ -156,7 +144,7 @@ namespace UR.RTDE.Grasshopper
                 switch (_kind)
                 {
                     case URReadKind.Joints:
-                        var q = session.GetActualQ();
+                        var q = _currentSession.GetActualQ();
                         var qTree = new GH_Structure<IGH_Goo>();
                         var qPath = new GH_Path(0);
                         for (int i = 0; i < 6 && i < q.Length; i++)
@@ -165,18 +153,18 @@ namespace UR.RTDE.Grasshopper
                         break;
 
                     case URReadKind.Pose:
-                        var p6 = session.GetActualTCPPose();
+                        var p6 = _currentSession.GetActualTCPPose();
                         var plane = PoseUtils.PoseToPlane(p6);
                         resultData = plane;
                         break;
 
                     case URReadKind.IO:
-                        var din = session.GetDigitalInState();
-                        var dout = session.GetDigitalOutState();
-                        var ai0 = session.GetStandardAnalogInput0();
-                        var ai1 = session.GetStandardAnalogInput1();
-                        var ao0 = session.GetStandardAnalogOutput0();
-                        var ao1 = session.GetStandardAnalogOutput1();
+                        var din = _currentSession.GetDigitalInState();
+                        var dout = _currentSession.GetDigitalOutState();
+                        var ai0 = _currentSession.GetStandardAnalogInput0();
+                        var ai1 = _currentSession.GetStandardAnalogInput1();
+                        var ao0 = _currentSession.GetStandardAnalogOutput0();
+                        var ao1 = _currentSession.GetStandardAnalogOutput1();
 
                         var ioTree = new GH_Structure<IGH_Goo>();
                         var pDin = new GH_Path(0);
@@ -197,9 +185,9 @@ namespace UR.RTDE.Grasshopper
                         break;
 
                     case URReadKind.Modes:
-                        var rmode = session.GetRobotMode();
-                        var smode = session.GetSafetyMode();
-                        var running = session.IsProgramRunning();
+                        var rmode = _currentSession.GetRobotMode();
+                        var smode = _currentSession.GetSafetyMode();
+                        var running = _currentSession.IsProgramRunning();
 
                         var modeTree = new GH_Structure<IGH_Goo>();
                         modeTree.Append(new GH_String($"{MapRobotMode(rmode)} ({rmode})"), new GH_Path(0));
@@ -248,108 +236,91 @@ namespace UR.RTDE.Grasshopper
 
         private void OnTimerElapsed(object state)
         {
-            // Prevent overlapping timer callbacks
-            if (Interlocked.Exchange(ref _timerRunning, 1) == 1)
+            if (_currentSession == null || !_currentSession.IsConnected)
                 return;
 
             try
             {
-                URSession session;
-                lock (_sessionLock)
+                object resultData = null;
+                string message = "ok";
+
+                switch (_kind)
                 {
-                    session = _currentSession;
+                    case URReadKind.Joints:
+                        var q = _currentSession.GetActualQ();
+                        var qTree = new GH_Structure<IGH_Goo>();
+                        var qPath = new GH_Path(0);
+                        for (int i = 0; i < 6 && i < q.Length; i++)
+                            qTree.Append(new GH_Number(q[i]), qPath);
+                        resultData = qTree;
+                        break;
+
+                    case URReadKind.Pose:
+                        var p6 = _currentSession.GetActualTCPPose();
+                        var plane = PoseUtils.PoseToPlane(p6);
+                        resultData = plane;
+                        break;
+
+                    case URReadKind.IO:
+                        var din = _currentSession.GetDigitalInState();
+                        var dout = _currentSession.GetDigitalOutState();
+                        var ai0 = _currentSession.GetStandardAnalogInput0();
+                        var ai1 = _currentSession.GetStandardAnalogInput1();
+                        var ao0 = _currentSession.GetStandardAnalogOutput0();
+                        var ao1 = _currentSession.GetStandardAnalogOutput1();
+
+                        var ioTree = new GH_Structure<IGH_Goo>();
+                        var pDin = new GH_Path(0);
+                        var pDout = new GH_Path(1);
+                        var pAnalog = new GH_Path(2);
+                        for (int i = 0; i < 18; i++)
+                        {
+                            bool dinBit = ((din >> i) & 1) == 1;
+                            bool doutBit = ((dout >> i) & 1) == 1;
+                            ioTree.Append(new GH_Boolean(dinBit), pDin);
+                            ioTree.Append(new GH_Boolean(doutBit), pDout);
+                        }
+                        ioTree.Append(new GH_Number(ai0), pAnalog);
+                        ioTree.Append(new GH_Number(ai1), pAnalog);
+                        ioTree.Append(new GH_Number(ao0), pAnalog);
+                        ioTree.Append(new GH_Number(ao1), pAnalog);
+                        resultData = ioTree;
+                        break;
+
+                    case URReadKind.Modes:
+                        var rmode = _currentSession.GetRobotMode();
+                        var smode = _currentSession.GetSafetyMode();
+                        var running = _currentSession.IsProgramRunning();
+
+                        var modeTree = new GH_Structure<IGH_Goo>();
+                        modeTree.Append(new GH_String($"{MapRobotMode(rmode)} ({rmode})"), new GH_Path(0));
+                        modeTree.Append(new GH_String($"{MapSafetyMode(smode)} ({smode})"), new GH_Path(1));
+                        modeTree.Append(new GH_Boolean(running), new GH_Path(2));
+                        resultData = modeTree;
+                        break;
                 }
-                
-                if (session == null || !session.IsConnected)
-                    return;
 
-                try
+                lock (_lock)
                 {
-                    object resultData = null;
-                    string message = "ok";
-
-                    switch (_kind)
-                    {
-                        case URReadKind.Joints:
-                            var q = session.GetActualQ();
-                            var qTree = new GH_Structure<IGH_Goo>();
-                            var qPath = new GH_Path(0);
-                            for (int i = 0; i < 6 && i < q.Length; i++)
-                                qTree.Append(new GH_Number(q[i]), qPath);
-                            resultData = qTree;
-                            break;
-
-                        case URReadKind.Pose:
-                            var p6 = session.GetActualTCPPose();
-                            var plane = PoseUtils.PoseToPlane(p6);
-                            resultData = plane;
-                            break;
-
-                        case URReadKind.IO:
-                            var din = session.GetDigitalInState();
-                            var dout = session.GetDigitalOutState();
-                            var ai0 = session.GetStandardAnalogInput0();
-                            var ai1 = session.GetStandardAnalogInput1();
-                            var ao0 = session.GetStandardAnalogOutput0();
-                            var ao1 = session.GetStandardAnalogOutput1();
-
-                            var ioTree = new GH_Structure<IGH_Goo>();
-                            var pDin = new GH_Path(0);
-                            var pDout = new GH_Path(1);
-                            var pAnalog = new GH_Path(2);
-                            for (int i = 0; i < 18; i++)
-                            {
-                                bool dinBit = ((din >> i) & 1) == 1;
-                                bool doutBit = ((dout >> i) & 1) == 1;
-                                ioTree.Append(new GH_Boolean(dinBit), pDin);
-                                ioTree.Append(new GH_Boolean(doutBit), pDout);
-                            }
-                            ioTree.Append(new GH_Number(ai0), pAnalog);
-                            ioTree.Append(new GH_Number(ai1), pAnalog);
-                            ioTree.Append(new GH_Number(ao0), pAnalog);
-                            ioTree.Append(new GH_Number(ao1), pAnalog);
-                            resultData = ioTree;
-                            break;
-
-                        case URReadKind.Modes:
-                            var rmode = session.GetRobotMode();
-                            var smode = session.GetSafetyMode();
-                            var running = session.IsProgramRunning();
-
-                            var modeTree = new GH_Structure<IGH_Goo>();
-                            modeTree.Append(new GH_String($"{MapRobotMode(rmode)} ({rmode})"), new GH_Path(0));
-                            modeTree.Append(new GH_String($"{MapSafetyMode(smode)} ({smode})"), new GH_Path(1));
-                            modeTree.Append(new GH_Boolean(running), new GH_Path(2));
-                            resultData = modeTree;
-                            break;
-                    }
-
-                    lock (_lock)
-                    {
-                        _lastReadData = resultData;
-                        _lastMessage = message;
-                        _hasNewData = true;
-                    }
-
-                    var doc = OnPingDocument();
-                    if (doc != null)
-                    {
-                        doc.ScheduleSolution(5, d => ExpireSolution(false));
-                    }
+                    _lastReadData = resultData;
+                    _lastMessage = message;
+                    _hasNewData = true;
                 }
-                catch (Exception ex)
+
+                var doc = OnPingDocument();
+                if (doc != null)
                 {
-                    lock (_lock)
-                    {
-                        _lastReadData = null;
-                        _lastMessage = ex.Message;
-                        _hasNewData = true;
-                    }
+                    doc.ScheduleSolution(5, d => ExpireSolution(false));
                 }
             }
-            finally
+            catch (Exception ex)
             {
-                Interlocked.Exchange(ref _timerRunning, 0);
+                lock (_lock)
+                {
+                    _lastReadData = null;
+                    _lastMessage = ex.Message;
+                    _hasNewData = true;
+                }
             }
         }
 
