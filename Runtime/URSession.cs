@@ -56,20 +56,14 @@ namespace UR.RTDE.Grasshopper
 
         public double[] GetActualQ()
         {
-            lock (_lockObj)
-            {
-                if (_receive == null) throw new InvalidOperationException("Not connected");
-                return _receive.GetActualQ();
-            }
+            if (_receive == null) throw new InvalidOperationException("Not connected");
+            return _receive.GetActualQ();
         }
 
         public double[] GetActualTCPPose()
         {
-            lock (_lockObj)
-            {
-                if (_receive == null) throw new InvalidOperationException("Not connected");
-                return InvokeReceive<double[]>(new[] { "GetActualTCPPose", "GetActualTcpPose", "GetActualToolPose" });
-            }
+            if (_receive == null) throw new InvalidOperationException("Not connected");
+            return InvokeReceive<double[]>(new[] { "GetActualTCPPose", "GetActualTcpPose", "GetActualToolPose" });
         }
 
         public bool MoveJ(double[] q, double speed, double acceleration, bool asynchronous)
@@ -161,83 +155,56 @@ namespace UR.RTDE.Grasshopper
 
         public int GetDigitalInState()
         {
-            lock (_lockObj)
-            {
-                if (_receive == null) throw new InvalidOperationException("Not connected");
-                return InvokeReceive<int>(new[] { "GetDigitalInState", "GetActualDigitalInputBits" });
-            }
+            if (_receive == null) throw new InvalidOperationException("Not connected");
+            return InvokeReceive<int>(new[] { "GetDigitalInState", "GetActualDigitalInputBits" });
         }
 
         public int GetDigitalOutState()
         {
-            lock (_lockObj)
-            {
-                if (_receive == null) throw new InvalidOperationException("Not connected");
-                return InvokeReceive<int>(new[] { "GetDigitalOutState", "GetActualDigitalOutputBits" });
-            }
+            if (_receive == null) throw new InvalidOperationException("Not connected");
+            return InvokeReceive<int>(new[] { "GetDigitalOutState", "GetActualDigitalOutputBits" });
         }
 
         public double GetStandardAnalogInput0()
         {
-            lock (_lockObj)
-            {
-                if (_receive == null) throw new InvalidOperationException("Not connected");
-                return InvokeReceive<double>(new[] { "GetStandardAnalogInput0", "GetActualStandardAnalogInput0" });
-            }
+            if (_receive == null) throw new InvalidOperationException("Not connected");
+            return InvokeReceive<double>(new[] { "GetStandardAnalogInput0", "GetActualStandardAnalogInput0" });
         }
 
         public double GetStandardAnalogInput1()
         {
-            lock (_lockObj)
-            {
-                if (_receive == null) throw new InvalidOperationException("Not connected");
-                return InvokeReceive<double>(new[] { "GetStandardAnalogInput1", "GetActualStandardAnalogInput1" });
-            }
+            if (_receive == null) throw new InvalidOperationException("Not connected");
+            return InvokeReceive<double>(new[] { "GetStandardAnalogInput1", "GetActualStandardAnalogInput1" });
         }
 
         public double GetStandardAnalogOutput0()
         {
-            lock (_lockObj)
-            {
-                if (_receive == null) throw new InvalidOperationException("Not connected");
-                return InvokeReceive<double>(new[] { "GetStandardAnalogOutput0", "GetActualStandardAnalogOutput0" });
-            }
+            if (_receive == null) throw new InvalidOperationException("Not connected");
+            return InvokeReceive<double>(new[] { "GetStandardAnalogOutput0", "GetActualStandardAnalogOutput0" });
         }
 
         public double GetStandardAnalogOutput1()
         {
-            lock (_lockObj)
-            {
-                if (_receive == null) throw new InvalidOperationException("Not connected");
-                return InvokeReceive<double>(new[] { "GetStandardAnalogOutput1", "GetActualStandardAnalogOutput1" });
-            }
+            if (_receive == null) throw new InvalidOperationException("Not connected");
+            return InvokeReceive<double>(new[] { "GetStandardAnalogOutput1", "GetActualStandardAnalogOutput1" });
         }
 
         public int GetRobotMode()
         {
-            lock (_lockObj)
-            {
-                if (_receive == null) throw new InvalidOperationException("Not connected");
-                return InvokeReceive<int>(new[] { "GetRobotMode" });
-            }
+            if (_receive == null) throw new InvalidOperationException("Not connected");
+            return InvokeReceive<int>(new[] { "GetRobotMode" });
         }
 
         public int GetSafetyMode()
         {
-            lock (_lockObj)
-            {
-                if (_receive == null) throw new InvalidOperationException("Not connected");
-                return InvokeReceive<int>(new[] { "GetSafetyMode" });
-            }
+            if (_receive == null) throw new InvalidOperationException("Not connected");
+            return InvokeReceive<int>(new[] { "GetSafetyMode" });
         }
 
         public bool IsProgramRunning()
         {
-            lock (_lockObj)
-            {
-                if (_receive == null) throw new InvalidOperationException("Not connected");
-                return InvokeReceive<bool>(new[] { "IsProgramRunning" });
-            }
+            if (_receive == null) throw new InvalidOperationException("Not connected");
+            return InvokeReceive<bool>(new[] { "IsProgramRunning" });
         }
 
         public bool RobotiqActivate(RobotiqBackend backend, bool autoCalibrate, int timeoutMs, bool installBridge, bool verbose, int port, out string message)
@@ -560,6 +527,8 @@ namespace UR.RTDE.Grasshopper
         /// </summary>
         private void WaitForMoveComplete()
         {
+            if (_receive == null) return;
+            
             // First, wait for the robot to start moving (velocity > threshold)
             // This prevents detecting "stopped" before the move even begins
             Thread.Sleep(100); // Give time for the move command to be processed
@@ -571,13 +540,7 @@ namespace UR.RTDE.Grasshopper
             {
                 try
                 {
-                    double[] velocities = null;
-                    lock (_lockObj)
-                    {
-                        if (_receive == null) return;
-                        velocities = InvokeReceive<double[]>(new[] { "GetActualQd" });
-                    }
-                    
+                    var velocities = InvokeReceive<double[]>(new[] { "GetActualQd" });
                     if (velocities != null)
                     {
                         foreach (var v in velocities)
@@ -609,13 +572,7 @@ namespace UR.RTDE.Grasshopper
             {
                 try
                 {
-                    double[] velocities = null;
-                    lock (_lockObj)
-                    {
-                        if (_receive == null) return;
-                        velocities = InvokeReceive<double[]>(new[] { "GetActualQd" });
-                    }
-                    
+                    var velocities = InvokeReceive<double[]>(new[] { "GetActualQd" });
                     if (velocities != null)
                     {
                         bool allStopped = true;
