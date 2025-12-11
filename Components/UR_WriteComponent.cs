@@ -18,8 +18,9 @@ namespace UR.RTDE.Grasshopper
     public class UR_WriteComponent : GH_Component
     {
         internal URActionKind _action = URActionKind.MoveJ;
-        private static List<string> _log = new List<string>();
+        private readonly List<string> _log = new List<string>();  // Changed from static to instance
         private double _stopDecel = 2.0;
+        private readonly object _sessionLock = new object();
         private URSession _lastSession;
 
         internal static readonly string[] ActionModes = { "MoveJ", "MoveL", "Stop", "SetDO" };
@@ -67,7 +68,10 @@ namespace UR.RTDE.Grasshopper
                 return;
             }
 
-            _lastSession = session;
+            lock (_sessionLock)
+            {
+                _lastSession = session;
+            }
 
             try
             {
@@ -352,8 +356,15 @@ namespace UR.RTDE.Grasshopper
 
         internal void TriggerStopFromButton()
         {
-            var session = _lastSession;
-            var decel = _stopDecel;
+            URSession session;
+            double decel;
+            
+            lock (_sessionLock)
+            {
+                session = _lastSession;
+                decel = _stopDecel;
+            }
+            
             if (session == null || !session.IsConnected)
             {
                 RhinoApp.InvokeOnUiThread((Action)(() =>
@@ -380,8 +391,11 @@ namespace UR.RTDE.Grasshopper
                 RhinoApp.InvokeOnUiThread((Action)(() =>
                 {
                     AddRuntimeMessage(ok ? GH_RuntimeMessageLevel.Remark : GH_RuntimeMessageLevel.Error, message);
-                    _log.Clear();
-                    _log.Add($"{DateTime.Now:HH:mm:ss} - {message}");
+                    lock (_sessionLock)
+                    {
+                        _log.Clear();
+                        _log.Add($"{DateTime.Now:HH:mm:ss} - {message}");
+                    }
                     ExpireSolution(false);
                 }));
             });
