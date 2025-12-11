@@ -134,12 +134,13 @@ namespace UR.RTDE.Grasshopper
                             return;
                         }
 
-                        // Execute all waypoints sequentially in background (always async)
+                        // Execute all waypoints sequentially in background
+                        // Use async=false so each move completes before the next starts
                         Task.Run(() =>
                         {
                             foreach (var wp in waypoints)
                             {
-                                session.MoveJ(wp, speed, accel, true); // async=true for non-blocking
+                                session.MoveJ(wp, speed, accel, false); // async=false for sequential execution
                             }
                         });
                         
@@ -205,12 +206,13 @@ namespace UR.RTDE.Grasshopper
                             return;
                         }
 
-                        // Execute all poses sequentially in background (always async)
+                        // Execute all poses sequentially in background
+                        // Use async=false so each move completes before the next starts
                         Task.Run(() =>
                         {
                             foreach (var p in poses)
                             {
-                                session.MoveL(p, lSpeed, lAccel, true); // async=true for non-blocking
+                                session.MoveL(p, lSpeed, lAccel, false); // async=false for sequential execution
                             }
                         });
                         
