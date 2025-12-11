@@ -551,23 +551,56 @@ namespace UR.RTDE.Grasshopper
         }
 
         /// <summary>
-        /// Waits for the robot to complete its current move by polling isSteady().
+        /// Waits for the robot to complete its current move.
         /// Must be called within lock.
         /// </summary>
         private void WaitForMoveComplete()
         {
-            if (_receive == null) return;
+            if (_receive == null || _control == null) return;
             
-            // Small delay to let the move start
-            Thread.Sleep(50);
+            // First, wait for the robot to start moving (velocity > threshold)
+            // This prevents detecting "stopped" before the move even begins
+            Thread.Sleep(100); // Give time for the move command to be processed
             
-            // Poll until robot is steady (not moving)
+            bool moveStarted = false;
+            int startTimeout = 200; // 2 seconds to detect move start (10ms * 200)
+            
+            for (int i = 0; i < startTimeout && !moveStarted; i++)
+            {
+                try
+                {
+                    var velocities = InvokeReceive<double[]>(new[] { "GetActualQd" });
+                    if (velocities != null)
+                    {
+                        foreach (var v in velocities)
+                        {
+                            if (Math.Abs(v) > 0.01) // Robot is moving
+                            {
+                                moveStarted = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+                catch { }
+                
+                if (!moveStarted)
+                    Thread.Sleep(10);
+            }
+            
+            // If move never started, maybe target was already reached or command failed
+            if (!moveStarted)
+                return;
+            
+            // Now wait for the robot to stop (all velocities near zero)
             int maxAttempts = 6000; // 60 seconds max (10ms * 6000)
+            int stoppedCount = 0; // Require multiple consecutive "stopped" readings
+            const int requiredStoppedReadings = 5;
+            
             for (int i = 0; i < maxAttempts; i++)
             {
                 try
                 {
-                    // Try to get robot velocity - if all velocities are near zero, we're done
                     var velocities = InvokeReceive<double[]>(new[] { "GetActualQd" });
                     if (velocities != null)
                     {
@@ -580,13 +613,22 @@ namespace UR.RTDE.Grasshopper
                                 break;
                             }
                         }
+                        
                         if (allStopped)
-                            return;
+                        {
+                            stoppedCount++;
+                            if (stoppedCount >= requiredStoppedReadings)
+                                return; // Confirmed stopped
+                        }
+                        else
+                        {
+                            stoppedCount = 0; // Reset counter if still moving
+                        }
                     }
                 }
                 catch
                 {
-                    // If we can't read velocities, just wait a bit and hope
+                    // If we can't read velocities, just continue waiting
                 }
                 
                 Thread.Sleep(10);
