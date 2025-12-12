@@ -22,6 +22,7 @@ namespace UR.RTDE.Grasshopper
         private double _stopDecel = 2.0;
         private readonly object _sessionLock = new object();
         private URSession _lastSession;
+        private volatile bool _isExecuting = false;  // Prevent overlapping executions
 
         internal static readonly string[] ActionModes = { "MoveJ", "MoveL", "Stop", "SetDO" };
 
@@ -81,6 +82,14 @@ namespace UR.RTDE.Grasshopper
                 switch (_action)
                 {
                     case URActionKind.MoveJ:
+                        // Check if already executing
+                        if (_isExecuting)
+                        {
+                            da.SetData(0, false);
+                            da.SetData(1, "Move already in progress");
+                            return;
+                        }
+
                         // Get joint values - supports tree input (processes all branches sequentially)
                         var jointsParam = Params.Input[1];
                         var jointsData = jointsParam.VolatileData;
@@ -135,12 +144,19 @@ namespace UR.RTDE.Grasshopper
                         }
 
                         // Execute all waypoints sequentially in background
-                        // Use async=false so each move completes before the next starts
+                        _isExecuting = true;
                         Task.Run(() =>
                         {
-                            foreach (var wp in waypoints)
+                            try
                             {
-                                session.MoveJ(wp, speed, accel, false); // async=false for sequential execution
+                                foreach (var wp in waypoints)
+                                {
+                                    session.MoveJ(wp, speed, accel, false);
+                                }
+                            }
+                            finally
+                            {
+                                _isExecuting = false;
                             }
                         });
                         
@@ -151,6 +167,14 @@ namespace UR.RTDE.Grasshopper
                         break;
 
                     case URActionKind.MoveL:
+                        // Check if already executing
+                        if (_isExecuting)
+                        {
+                            da.SetData(0, false);
+                            da.SetData(1, "Move already in progress");
+                            return;
+                        }
+
                         // Get pose/plane data - supports tree input
                         var poseParam = Params.Input[1];
                         var planeParam = Params.Input[2];
@@ -207,12 +231,19 @@ namespace UR.RTDE.Grasshopper
                         }
 
                         // Execute all poses sequentially in background
-                        // Use async=false so each move completes before the next starts
+                        _isExecuting = true;
                         Task.Run(() =>
                         {
-                            foreach (var p in poses)
+                            try
                             {
-                                session.MoveL(p, lSpeed, lAccel, false); // async=false for sequential execution
+                                foreach (var p in poses)
+                                {
+                                    session.MoveL(p, lSpeed, lAccel, false);
+                                }
+                            }
+                            finally
+                            {
+                                _isExecuting = false;
                             }
                         });
                         
