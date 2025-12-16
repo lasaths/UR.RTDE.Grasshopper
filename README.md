@@ -59,16 +59,6 @@ docker run --rm -it --network host universalrobots/ursim_e-series
 
 Connect to the simulated robot at `192.168.56.1` (default Docker host IP) and ensure RTDE ports 30002-30004 are reachable.
 
-### UR Simulation Testing (UR Docker)
-
-Run the current URSim Docker for UR E-Series to simulate a robot during UI development:
-
-```bash
-docker run --rm -it --network host universalrobots/ursim_e-series
-```
-
-The simulated robot listens on `192.168.56.1` by default; point `UR Session` to that IP (or `127.0.0.1` if host-mapped) and ensure RTDE ports 30002-30004 are accessible.
-
 ## Quick Start
 
 1. **Connect to your robot** using the `UR Session` component
