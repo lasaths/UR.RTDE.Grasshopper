@@ -1,15 +1,15 @@
 # UR.RTDE.Grasshopper
 
 [![Yak Package](https://img.shields.io/badge/yak-UR--RTDE--Grasshopper-blue)](https://yak.rhino3d.com/packages/UR-RTDE-Grasshopper)
-[![Version](https://img.shields.io/badge/version-0.1.2-blue)](https://yak.rhino3d.com/packages/UR-RTDE-Grasshopper)
+[![Version](https://img.shields.io/badge/version-1.3.0-blue)](https://yak.rhino3d.com/packages/UR-RTDE-Grasshopper)
 [![Rhino](https://img.shields.io/badge/Rhino-8-green)](https://www.rhino3d.com/)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-Grasshopper components to control Universal Robots via UR.RTDE (C# wrapper). Supports session management, reads (joints/pose/IO/modes), basic commands, and Robotiq gripper control (URCap) via UR.RTDE 1.2.
+Grasshopper components to control Universal Robots via UR.RTDE (C# wrapper). Supports session management, reads (joints/pose/IO/modes), basic commands, and Robotiq gripper control (URCap) via UR.RTDE 1.2. Tested on Rhino 7 (net48) and Rhino 8 (net8.0/net8.0-windows).
 
-## ✨ New in 0.1.2: Enhanced Components
+## ✨ New in 1.3.0: Rhino 7 & Rhino 8 Yak Packages
 
-The **UR Read** component now uses an **event-driven architecture** and **UR Command** has been simplified for better performance:
+Release 1.3.0 ships dedicated Yak packages for both Rhino 7 (`rh7_0`) and Rhino 8 (`rh8_0`) while keeping the same proven read/command experience:
 
 ### UR Read (Event-Driven)
 ✅ **Non-blocking timer-based polling** - UI stays responsive  
@@ -38,6 +38,13 @@ The **UR Read** component now uses an **event-driven architecture** and **UR Com
 
 The Rhino Package Manager is the easiest way to install and manage the package.
 
+### Via Rhino Package Manager (Default / Recommended)
+
+1. Open Rhino 8 or Rhino 7
+2. Open **Tools → Package Manager** (or `Ctrl+Shift+P`)
+3. Search for `UR-RTDE-Grasshopper`
+4. Click **Install** (this is the preferred installation method)
+
 ### Via Yak Command Line
 
 Alternatively, you can install via the command line:
@@ -50,6 +57,16 @@ yak install UR-RTDE-Grasshopper
 
 Copy the built `.gha` file to your Grasshopper Libraries folder:
 - **Windows**: `%AppData%\Grasshopper\Libraries`
+
+### UR Simulation Testing (UR Docker)
+
+Run the current URSim Docker for UR E-Series to simulate a robot during UI development:
+
+```bash
+docker run --rm -it --network host universalrobots/ursim_e-series
+```
+
+The simulated robot listens on `192.168.56.1` by default; point `UR Session` to that IP (or `127.0.0.1` if host-mapped) and ensure RTDE ports 30002-30004 are accessible.
 
 ## Quick Start
 
@@ -306,7 +323,7 @@ This codebase was built with assistance from AI tools. It is provided "AS IS", w
 
 ## Migration from Previous Versions
 
-### Upgrading to 0.1.2 (Async Components)
+### Upgrading to 1.3.0 (Async Components)
 
 **Good News**: Fully backward compatible!
 
