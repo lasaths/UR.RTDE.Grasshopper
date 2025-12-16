@@ -5,7 +5,7 @@ This document provides information for AI agents and automated systems working w
 ## Project Overview
 
 **Name**: UR.RTDE.Grasshopper  
-**Version**: 0.1.3  
+**Version**: 1.3.0  
 **Type**: Grasshopper plugin for Rhino  
 **Purpose**: Control Universal Robots via RTDE (Real-Time Data Exchange) protocol from Grasshopper, including Robotiq grippers (URCap)  
 **Language**: C# (.NET)  
@@ -411,8 +411,8 @@ if (session == null || !session.IsConnected)
 ## Version Management
 
 ### Current Version
-- **Version**: 0.1.3 (in `.csproj`)
-- **Tag**: `v0.1.3` (in git)
+- **Version**: 1.3.0 (in `.csproj`)
+- **Tag**: `v1.3.0` (in git)
 - **Yak Package**: Available on `yak.rhino3d.com`
 
 ### Version Bump Process
