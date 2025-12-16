@@ -5,7 +5,7 @@ This document provides information for AI agents and automated systems working w
 ## Project Overview
 
 **Name**: UR.RTDE.Grasshopper  
-**Version**: 0.1.2  
+**Version**: 0.1.3  
 **Type**: Grasshopper plugin for Rhino  
 **Purpose**: Control Universal Robots via RTDE (Real-Time Data Exchange) protocol from Grasshopper, including Robotiq grippers (URCap)  
 **Language**: C# (.NET)  
@@ -411,8 +411,8 @@ if (session == null || !session.IsConnected)
 ## Version Management
 
 ### Current Version
-- **Version**: 0.1.2 (in `.csproj`)
-- **Tag**: `v0.1.2` (in git)
+- **Version**: 0.1.3 (in `.csproj`)
+- **Tag**: `v0.1.3` (in git)
 - **Yak Package**: Available on `yak.rhino3d.com`
 
 ### Version Bump Process
@@ -456,6 +456,10 @@ yak push --source https://test.yak.rhino3d.com ur-rtde-grasshopper-<version>-rh8
 
 # Push to production
 yak push ur-rtde-grasshopper-<version>-rh8_0-any.yak
+
+### Rhino 7 publishing
+- After the Rhino 8 package is ready, duplicate `bin/Release/net48/manifest.yml`, set `rhino version: rh7_0` (and keep the existing `icon`, `keywords`, and `guid`) and rebuild or repackage into `ur-rtde-grasshopper-<version>-rh7_0-any.yak`.  
+- Push the Rhino 7 artifact with `yak push ur-rtde-grasshopper-<version>-rh7_0-any.yak` so both server entries (rh8_0 and rh7_0) exist for each release.  
 ```
 
 ## Important Notes
