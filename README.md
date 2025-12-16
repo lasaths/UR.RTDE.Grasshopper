@@ -2,7 +2,7 @@
 
 [![Yak Package](https://img.shields.io/badge/yak-UR--RTDE--Grasshopper-blue)](https://yak.rhino3d.com/packages/UR-RTDE-Grasshopper)
 [![Version](https://img.shields.io/badge/version-1.3.0-blue)](https://yak.rhino3d.com/packages/UR-RTDE-Grasshopper)
-[![Rhino](https://img.shields.io/badge/Rhino-8-green)](https://www.rhino3d.com/)
+[![Rhino](https://img.shields.io/badge/Rhino-7%20%26%208-green)](https://www.rhino3d.com/)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 Grasshopper components to control Universal Robots via UR.RTDE (C# wrapper). Supports session management, reads (joints/pose/IO/modes), basic commands, and Robotiq gripper control (URCap) via UR.RTDE 1.2. Tested on Rhino 7 (net48) and Rhino 8 (net8.0/net8.0-windows).
@@ -29,21 +29,12 @@ Release 1.3.0 ships dedicated Yak packages for both Rhino 7 (`rh7_0`) and Rhino 
 
 ## Installation
 
-### Via Rhino Package Manager (Recommended for Rhino 8)
-
-1. Open Rhino 8
-2. Go to **Tools** → **Package Manager** (or press `Ctrl+Shift+P`)
-3. Search for **UR-RTDE-Grasshopper**
-4. Click **Install**
-
-The Rhino Package Manager is the easiest way to install and manage the package.
-
 ### Via Rhino Package Manager (Default / Recommended)
 
 1. Open Rhino 8 or Rhino 7
 2. Open **Tools → Package Manager** (or `Ctrl+Shift+P`)
 3. Search for `UR-RTDE-Grasshopper`
-4. Click **Install** (this is the preferred installation method)
+4. Click **Install** (the package manager entry is the default way to install UR.RTDE.Grasshopper)
 
 ### Via Yak Command Line
 
@@ -57,6 +48,16 @@ yak install UR-RTDE-Grasshopper
 
 Copy the built `.gha` file to your Grasshopper Libraries folder:
 - **Windows**: `%AppData%\Grasshopper\Libraries`
+
+### UR Simulation Testing (UR Docker)
+
+Run the current URSim Docker for UR E-Series to simulate a robot during UI development:
+
+```bash
+docker run --rm -it --network host universalrobots/ursim_e-series
+```
+
+Connect to the simulated robot at `192.168.56.1` (default Docker host IP) and ensure RTDE ports 30002-30004 are reachable.
 
 ### UR Simulation Testing (UR Docker)
 
@@ -319,7 +320,7 @@ dotnet build -p:BuildYakPackage=false
 - Ensure emergency stop procedures are in place
 - The authors assume no liability for damages or injuries
 
-This codebase was built with assistance from AI tools. It is provided "AS IS", without warranty of any kind, express or implied. Use at your own risk.
+This codebase was built with assistance from AI tools and mirrors the upstream `https://github.com/lasaths/UR.RTDE` workflow. It is provided "AS IS", without warranty of any kind, express or implied. Use at your own risk.
 
 ## Migration from Previous Versions
 
