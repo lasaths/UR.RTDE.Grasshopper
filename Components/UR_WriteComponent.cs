@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
@@ -18,11 +18,21 @@ namespace UR.RTDE.Grasshopper
     public class UR_WriteComponent : GH_Component
     {
         internal URActionKind _action = URActionKind.MoveJ;
-        private readonly List<string> _log = new List<string>();  // Changed from static to instance
+        private readonly List<string> _log = new List<string>();
         private double _stopDecel = 2.0;
         private readonly object _sessionLock = new object();
+        private readonly object _stateLock = new object();
         private URSession _lastSession;
-        private volatile bool _isExecuting = false;  // Prevent overlapping executions
+
+        private bool _isRunning = false;
+        private int _currentIndex = 0; // 1-based while running; 0 when idle.
+        private int _totalCount = 0;
+        private int _lastRunId = 0;
+        private bool _donePulsePending = false;
+        private bool _previousExecute = false;
+        private bool _lastOk = true;
+        private string _lastMessage = "Idle";
+        private bool _refreshQueued = false;
 
         internal static readonly string[] ActionModes = { "MoveJ", "MoveL", "Stop", "SetDO" };
 
@@ -47,252 +57,504 @@ namespace UR.RTDE.Grasshopper
         {
             p.AddBooleanParameter("OK", "O", "True if command succeeded.", GH_ParamAccess.item);
             p.AddTextParameter("Message", "M", "Message or error.", GH_ParamAccess.item);
+            p.AddBooleanParameter("Running", "R", "True while a MoveJ/MoveL sequence is executing.", GH_ParamAccess.item);
+            p.AddIntegerParameter("CurrentIndex", "I", "Current 1-based target index; 0 when idle.", GH_ParamAccess.item);
+            p.AddIntegerParameter("Total", "T", "Total target count for active/last sequence.", GH_ParamAccess.item);
+            p.AddBooleanParameter("Done", "D", "True for one solve when a sequence completes successfully.", GH_ParamAccess.item);
         }
 
         protected override void SolveInstance(IGH_DataAccess da)
         {
-            //Message = $"{_action}";
-            
             URSessionGoo goo = null;
-            if (!da.GetData(0, ref goo))
-            {
-                da.SetData(0, false);
-                da.SetData(1, "No session provided");
-                return;
-            }
-
+            var hasSession = da.GetData(0, ref goo);
             var session = goo?.Value;
-            if (session == null || !session.IsConnected)
-            {
-                da.SetData(0, false);
-                da.SetData(1, "Session not connected");
-                return;
-            }
 
-            lock (_sessionLock)
+            if (session != null && session.IsConnected)
             {
-                _lastSession = session;
+                lock (_sessionLock)
+                {
+                    _lastSession = session;
+                }
             }
 
             try
             {
-                bool result = false;
-                string message = "ok";
-
                 switch (_action)
                 {
                     case URActionKind.MoveJ:
-                        // Check if already executing
-                        if (_isExecuting)
-                        {
-                            da.SetData(0, false);
-                            da.SetData(1, "Move already in progress");
-                            return;
-                        }
-
-                        // Get joint values - supports tree input (processes all branches sequentially)
-                        var jointsParam = Params.Input[1];
-                        var jointsData = jointsParam.VolatileData;
-                        
-                        if (jointsData.PathCount == 0 || jointsData.DataCount == 0)
-                        {
-                            da.SetData(0, false);
-                            da.SetData(1, "No joint data provided");
-                            return;
-                        }
-
-                        double speed = 1.05, accel = 1.4;
-                        da.GetData(2, ref speed);
-                        da.GetData(3, ref accel);
-
-                        // Collect all waypoints from tree - each branch should have 6 joint values
-                        var waypoints = new List<double[]>();
-                        for (int i = 0; i < jointsData.PathCount; i++)
-                        {
-                            var branch = jointsData.get_Branch(i);
-                            if (branch.Count >= 6)
-                            {
-                                var joints = new double[6];
-                                for (int j = 0; j < 6; j++)
-                                {
-                                    if (branch[j] is global::Grasshopper.Kernel.Types.GH_Number ghNum)
-                                        joints[j] = ghNum.Value;
-                                    else if (branch[j] is double d)
-                                        joints[j] = d;
-                                    else
-                                    {
-                                        da.SetData(0, false);
-                                        da.SetData(1, $"Branch {i}: Invalid joint value at index {j}");
-                                        return;
-                                    }
-                                }
-                                waypoints.Add(joints);
-                            }
-                            else if (branch.Count > 0)
-                            {
-                                da.SetData(0, false);
-                                da.SetData(1, $"Branch {i}: Expected 6 joint values, got {branch.Count}");
-                                return;
-                            }
-                        }
-
-                        if (waypoints.Count == 0)
-                        {
-                            da.SetData(0, false);
-                            da.SetData(1, "Each branch must contain exactly 6 joint angles");
-                            return;
-                        }
-
-                        // Execute all waypoints sequentially in background
-                        _isExecuting = true;
-                        Task.Run(() =>
-                        {
-                            try
-                            {
-                                foreach (var wp in waypoints)
-                                {
-                                    session.MoveJ(wp, speed, accel, false);
-                                }
-                            }
-                            finally
-                            {
-                                _isExecuting = false;
-                            }
-                        });
-                        
-                        result = true;
-                        message = waypoints.Count == 1 
-                            ? "MoveJ command sent" 
-                            : $"MoveJ trajectory sent ({waypoints.Count} waypoints)";
+                        HandleMoveJ(da, hasSession, session);
                         break;
 
                     case URActionKind.MoveL:
-                        // Check if already executing
-                        if (_isExecuting)
-                        {
-                            da.SetData(0, false);
-                            da.SetData(1, "Move already in progress");
-                            return;
-                        }
-
-                        // Get pose/plane data - supports tree input
-                        var poseParam = Params.Input[1];
-                        var planeParam = Params.Input[2];
-                        var poseData = poseParam.VolatileData;
-                        var planeData = planeParam.VolatileData;
-
-                        double lSpeed = 0.25, lAccel = 1.2;
-                        da.GetData(3, ref lSpeed);
-                        da.GetData(4, ref lAccel);
-
-                        var poses = new List<double[]>();
-
-                        // Try planes first
-                        if (planeData.PathCount > 0 && planeData.DataCount > 0)
-                        {
-                            for (int i = 0; i < planeData.PathCount; i++)
-                            {
-                                var branch = planeData.get_Branch(i);
-                                foreach (var item in branch)
-                                {
-                                    if (item is global::Grasshopper.Kernel.Types.GH_Plane ghPlane && ghPlane.Value.IsValid)
-                                    {
-                                        poses.Add(PoseUtils.PlaneToPose(ghPlane.Value));
-                                    }
-                                }
-                            }
-                        }
-                        // Otherwise try pose lists
-                        else if (poseData.PathCount > 0 && poseData.DataCount > 0)
-                        {
-                            for (int i = 0; i < poseData.PathCount; i++)
-                            {
-                                var branch = poseData.get_Branch(i);
-                                if (branch.Count >= 6)
-                                {
-                                    var pose = new double[6];
-                                    for (int j = 0; j < 6; j++)
-                                    {
-                                        if (branch[j] is global::Grasshopper.Kernel.Types.GH_Number ghNum)
-                                            pose[j] = ghNum.Value;
-                                        else if (branch[j] is double d)
-                                            pose[j] = d;
-                                    }
-                                    poses.Add(pose);
-                                }
-                            }
-                        }
-
-                        if (poses.Count == 0)
-                        {
-                            da.SetData(0, false);
-                            da.SetData(1, "Provide target Plane(s) or pose list(s) [x,y,z,rx,ry,rz]");
-                            return;
-                        }
-
-                        // Execute all poses sequentially in background
-                        _isExecuting = true;
-                        Task.Run(() =>
-                        {
-                            try
-                            {
-                                foreach (var p in poses)
-                                {
-                                    session.MoveL(p, lSpeed, lAccel, false);
-                                }
-                            }
-                            finally
-                            {
-                                _isExecuting = false;
-                            }
-                        });
-                        
-                        result = true;
-                        message = poses.Count == 1 
-                            ? "MoveL command sent" 
-                            : $"MoveL trajectory sent ({poses.Count} waypoints)";
+                        HandleMoveL(da, hasSession, session);
                         break;
 
                     case URActionKind.Stop:
+                        if (session == null || !session.IsConnected)
+                        {
+                            SetFailedState("Session not connected");
+                            WriteStateOutputs(da);
+                            return;
+                        }
+
                         double decel = 2.0;
                         da.GetData(1, ref decel);
                         _stopDecel = decel;
                         bool stopJ = session.StopJ(decel);
                         bool stopL = session.StopL(decel);
-                        result = stopJ || stopL;
-                        var lastError = session.LastError ?? "Unknown error";
-                        message = result ? $"Stop sent (decel {decel})" : $"Stop failed: {lastError}";
+                        bool stopResult = stopJ || stopL;
+                        var stopError = session.LastError ?? "Unknown error";
+                        SetStoppedState(stopResult ? $"Stop sent (decel {decel})" : $"Stop failed: {stopError}", stopResult);
+                        WriteStateOutputs(da);
                         break;
 
                     case URActionKind.SetDO:
-                        int pin = 0; 
+                        if (session == null || !session.IsConnected)
+                        {
+                            SetFailedState("Session not connected");
+                            WriteStateOutputs(da);
+                            return;
+                        }
+
+                        int pin = 0;
                         bool val = false;
                         da.GetData(1, ref pin);
                         da.GetData(2, ref val);
-                        result = session.SetStandardDigitalOut(pin, val);
-                        message = result ? $"Digital output {pin} set to {val}" : $"SetDO failed: {session.LastError ?? "Unknown error"}";
+                        bool setDoResult = session.SetStandardDigitalOut(pin, val);
+                        SetIdleState(setDoResult, setDoResult
+                            ? $"Digital output {pin} set to {val}"
+                            : $"SetDO failed: {session.LastError ?? "Unknown error"}");
+                        WriteStateOutputs(da);
                         break;
 
                     default:
-                        da.SetData(0, false);
-                        da.SetData(1, "Not implemented");
+                        SetFailedState("Not implemented");
+                        WriteStateOutputs(da);
                         return;
                 }
-
-                _log.Clear();
-                _log.Add($"{DateTime.Now:HH:mm:ss} - {message}");
-                
-                da.SetData(0, result);
-                da.SetData(1, message);
             }
             catch (Exception ex)
             {
-                da.SetData(0, false);
-                da.SetData(1, ex.Message);
-                
-                _log.Clear();
-                _log.Add($"{DateTime.Now:HH:mm:ss} - Error: {ex.Message}");
+                SetFailedState(ex.Message);
+                WriteStateOutputs(da);
             }
+        }
+
+        private void HandleMoveJ(IGH_DataAccess da, bool hasSession, URSession session)
+        {
+            bool execute = false;
+            da.GetData(4, ref execute);
+            bool risingEdge = execute && !_previousExecute;
+            _previousExecute = execute;
+
+            bool running;
+            lock (_stateLock) running = _isRunning;
+            if (running || !risingEdge)
+            {
+                WriteStateOutputs(da);
+                return;
+            }
+
+            if (!hasSession || session == null || !session.IsConnected)
+            {
+                SetFailedState("Session not connected");
+                WriteStateOutputs(da);
+                return;
+            }
+
+            var jointsParam = Params.Input[1];
+            var jointsData = jointsParam.VolatileData;
+            if (jointsData.PathCount == 0 || jointsData.DataCount == 0)
+            {
+                SetFailedState("No joint data provided");
+                WriteStateOutputs(da);
+                return;
+            }
+
+            double speed = 1.05, accel = 1.4;
+            da.GetData(2, ref speed);
+            da.GetData(3, ref accel);
+
+            var waypoints = new List<double[]>();
+            for (int i = 0; i < jointsData.PathCount; i++)
+            {
+                var branch = jointsData.get_Branch(i);
+                if (branch.Count >= 6)
+                {
+                    var joints = new double[6];
+                    for (int j = 0; j < 6; j++)
+                    {
+                        if (branch[j] is global::Grasshopper.Kernel.Types.GH_Number ghNum) joints[j] = ghNum.Value;
+                        else if (branch[j] is double d) joints[j] = d;
+                        else
+                        {
+                            SetFailedState($"Branch {i}: Invalid joint value at index {j}");
+                            WriteStateOutputs(da);
+                            return;
+                        }
+                    }
+                    waypoints.Add(joints);
+                }
+                else if (branch.Count > 0)
+                {
+                    SetFailedState($"Branch {i}: Expected 6 joint values, got {branch.Count}");
+                    WriteStateOutputs(da);
+                    return;
+                }
+            }
+
+            if (waypoints.Count == 0)
+            {
+                SetFailedState("Each branch must contain exactly 6 joint angles");
+                WriteStateOutputs(da);
+                return;
+            }
+
+            var snapshot = new List<double[]>(waypoints.Count);
+            foreach (var wp in waypoints) snapshot.Add((double[])wp.Clone());
+
+            int runId;
+            lock (_stateLock)
+            {
+                _isRunning = true;
+                _currentIndex = 0;
+                _totalCount = snapshot.Count;
+                _lastRunId++;
+                runId = _lastRunId;
+                _donePulsePending = false;
+                _lastOk = true;
+                _lastMessage = "Executing 0/" + _totalCount;
+            }
+
+            AddLog(_lastMessage);
+            WriteStateOutputs(da);
+            RequestRefresh();
+
+            Task.Run(() => ExecuteMoveJRun(runId, session, snapshot, speed, accel));
+        }
+
+        private void HandleMoveL(IGH_DataAccess da, bool hasSession, URSession session)
+        {
+            bool execute = false;
+            da.GetData(5, ref execute);
+            bool risingEdge = execute && !_previousExecute;
+            _previousExecute = execute;
+
+            bool running;
+            lock (_stateLock) running = _isRunning;
+            if (running || !risingEdge)
+            {
+                WriteStateOutputs(da);
+                return;
+            }
+
+            if (!hasSession || session == null || !session.IsConnected)
+            {
+                SetFailedState("Session not connected");
+                WriteStateOutputs(da);
+                return;
+            }
+
+            var poseParam = Params.Input[1];
+            var planeParam = Params.Input[2];
+            var poseData = poseParam.VolatileData;
+            var planeData = planeParam.VolatileData;
+
+            double speed = 0.25, accel = 1.2;
+            da.GetData(3, ref speed);
+            da.GetData(4, ref accel);
+
+            var poses = new List<double[]>();
+            if (planeData.PathCount > 0 && planeData.DataCount > 0)
+            {
+                for (int i = 0; i < planeData.PathCount; i++)
+                {
+                    var branch = planeData.get_Branch(i);
+                    foreach (var item in branch)
+                    {
+                        if (item is global::Grasshopper.Kernel.Types.GH_Plane ghPlane && ghPlane.Value.IsValid)
+                            poses.Add(PoseUtils.PlaneToPose(ghPlane.Value));
+                    }
+                }
+            }
+            else if (poseData.PathCount > 0 && poseData.DataCount > 0)
+            {
+                for (int i = 0; i < poseData.PathCount; i++)
+                {
+                    var branch = poseData.get_Branch(i);
+                    if (branch.Count >= 6)
+                    {
+                        var pose = new double[6];
+                        for (int j = 0; j < 6; j++)
+                        {
+                            if (TryExtractDouble(branch[j], out var value))
+                            {
+                                pose[j] = value;
+                            }
+                            else
+                            {
+                                SetFailedState($"Branch {i}: Invalid pose value at index {j}");
+                                WriteStateOutputs(da);
+                                return;
+                            }
+                        }
+                        poses.Add(pose);
+                    }
+                    else if (branch.Count > 0)
+                    {
+                        SetFailedState($"Branch {i}: Expected 6 pose values, got {branch.Count}");
+                        WriteStateOutputs(da);
+                        return;
+                    }
+                }
+            }
+
+            if (poses.Count == 0)
+            {
+                SetFailedState("Provide target Plane(s) or pose list(s) [x,y,z,rx,ry,rz]");
+                WriteStateOutputs(da);
+                return;
+            }
+
+            var snapshot = new List<double[]>(poses.Count);
+            foreach (var p in poses) snapshot.Add((double[])p.Clone());
+
+            int runId;
+            lock (_stateLock)
+            {
+                _isRunning = true;
+                _currentIndex = 0;
+                _totalCount = snapshot.Count;
+                _lastRunId++;
+                runId = _lastRunId;
+                _donePulsePending = false;
+                _lastOk = true;
+                _lastMessage = "Executing 0/" + _totalCount;
+            }
+
+            AddLog(_lastMessage);
+            WriteStateOutputs(da);
+            RequestRefresh();
+
+            Task.Run(() => ExecuteMoveLRun(runId, session, snapshot, speed, accel));
+        }
+
+        private void ExecuteMoveJRun(int runId, URSession session, List<double[]> waypoints, double speed, double accel)
+        {
+            for (int i = 0; i < waypoints.Count; i++)
+            {
+                if (!TrySetProgress(runId, i + 1)) return;
+
+                bool ok;
+                try
+                {
+                    ok = session.MoveJ(waypoints[i], speed, accel, false);
+                }
+                catch (Exception ex)
+                {
+                    FinishRun(runId, false, "Failed: " + ex.Message, false);
+                    return;
+                }
+
+                if (!ok)
+                {
+                    var error = session.LastError ?? "Unknown error";
+                    FinishRun(runId, false, $"Failed at {i + 1}/{waypoints.Count}: {error}", false);
+                    return;
+                }
+            }
+
+            FinishRun(runId, true, $"Completed {waypoints.Count}/{waypoints.Count}", true);
+        }
+
+        private void ExecuteMoveLRun(int runId, URSession session, List<double[]> poses, double speed, double accel)
+        {
+            for (int i = 0; i < poses.Count; i++)
+            {
+                if (!TrySetProgress(runId, i + 1)) return;
+
+                bool ok;
+                try
+                {
+                    ok = session.MoveL(poses[i], speed, accel, false);
+                }
+                catch (Exception ex)
+                {
+                    FinishRun(runId, false, "Failed: " + ex.Message, false);
+                    return;
+                }
+
+                if (!ok)
+                {
+                    var error = session.LastError ?? "Unknown error";
+                    FinishRun(runId, false, $"Failed at {i + 1}/{poses.Count}: {error}", false);
+                    return;
+                }
+            }
+
+            FinishRun(runId, true, $"Completed {poses.Count}/{poses.Count}", true);
+        }
+
+        private bool TrySetProgress(int runId, int index)
+        {
+            lock (_stateLock)
+            {
+                if (!_isRunning || runId != _lastRunId) return false;
+                _currentIndex = index;
+                _lastOk = true;
+                _lastMessage = $"Executing {index}/{_totalCount}";
+            }
+
+            RequestRefresh();
+            return true;
+        }
+
+        private void FinishRun(int runId, bool ok, string message, bool pulseDone)
+        {
+            lock (_stateLock)
+            {
+                if (runId != _lastRunId) return;
+                _isRunning = false;
+                _lastOk = ok;
+                _lastMessage = message;
+                _donePulsePending = pulseDone;
+                if (ok) _currentIndex = _totalCount;
+            }
+
+            AddLog(message);
+            RequestRefresh();
+        }
+
+        private void SetIdleState(bool ok, string message)
+        {
+            lock (_stateLock)
+            {
+                _isRunning = false;
+                _currentIndex = 0;
+                _totalCount = 0;
+                _donePulsePending = false;
+                _lastOk = ok;
+                _lastMessage = message;
+            }
+
+            AddLog(message);
+        }
+
+        private void SetStoppedState(string message, bool ok)
+        {
+            lock (_stateLock)
+            {
+                _isRunning = false;
+                _currentIndex = 0;
+                _totalCount = 0;
+                _donePulsePending = false;
+                _lastRunId++;
+                _lastOk = ok;
+                _lastMessage = message;
+            }
+
+            AddLog(message);
+        }
+
+        private void SetFailedState(string message)
+        {
+            lock (_stateLock)
+            {
+                _isRunning = false;
+                _currentIndex = 0;
+                _totalCount = 0;
+                _lastRunId++;
+                _donePulsePending = false;
+                _lastOk = false;
+                _lastMessage = message;
+            }
+
+            AddLog("Error: " + message);
+        }
+
+        private static bool TryExtractDouble(object value, out double numeric)
+        {
+            if (value is global::Grasshopper.Kernel.Types.GH_Number ghNum)
+            {
+                numeric = ghNum.Value;
+                return true;
+            }
+
+            if (value is double d)
+            {
+                numeric = d;
+                return true;
+            }
+
+            numeric = 0.0;
+            return false;
+        }
+
+        private void AddLog(string message)
+        {
+            lock (_sessionLock)
+            {
+                _log.Clear();
+                _log.Add($"{DateTime.Now:HH:mm:ss} - {message}");
+            }
+        }
+
+        private void RequestRefresh()
+        {
+            lock (_stateLock)
+            {
+                if (_refreshQueued) return;
+                _refreshQueued = true;
+            }
+
+            RhinoApp.InvokeOnUiThread((Action)(() =>
+            {
+                try
+                {
+                    var doc = OnPingDocument();
+                    if (doc != null)
+                    {
+                        doc.ScheduleSolution(5, d => ExpireSolution(false));
+                    }
+                }
+                finally
+                {
+                    lock (_stateLock)
+                    {
+                        _refreshQueued = false;
+                    }
+                }
+            }));
+        }
+
+        private void WriteStateOutputs(IGH_DataAccess da)
+        {
+            bool ok;
+            string message;
+            bool running;
+            int current;
+            int total;
+            bool done;
+
+            lock (_stateLock)
+            {
+                ok = _lastOk;
+                message = _lastMessage;
+                running = _isRunning;
+                current = _currentIndex;
+                total = _totalCount;
+                done = _donePulsePending;
+                if (_donePulsePending) _donePulsePending = false;
+            }
+
+            da.SetData(0, ok);
+            da.SetData(1, message);
+            da.SetData(2, running);
+            da.SetData(3, current);
+            da.SetData(4, total);
+            da.SetData(5, done);
+
+            if (done) RequestRefresh();
         }
 
         internal void SetAction(int index)
@@ -300,6 +562,7 @@ namespace UR.RTDE.Grasshopper
             if (index >= 0 && index < ActionModes.Length)
             {
                 _action = (URActionKind)index;
+                _previousExecute = false;
                 RebuildInputsForAction();
             }
         }
@@ -343,12 +606,14 @@ namespace UR.RTDE.Grasshopper
                 if (def.HasValue) p.SetPersistentData(def.Value);
                 return p;
             }
+
             Param_Boolean Bool(string name, string nick, string desc, bool? def = null, bool optional = true)
             {
                 var p = new Param_Boolean { Name = name, NickName = nick, Description = desc, Optional = optional };
                 if (def.HasValue) p.SetPersistentData(def.Value);
                 return p;
             }
+
             Param_Integer Int(string name, string nick, string desc, int? def = null, bool optional = true)
             {
                 var p = new Param_Integer { Name = name, NickName = nick, Description = desc, Optional = optional };
@@ -362,6 +627,7 @@ namespace UR.RTDE.Grasshopper
                     Params.RegisterInputParam(Num("Joints", "Q", "Joint target angles (rad)", GH_ParamAccess.list, null, false));
                     Params.RegisterInputParam(Num("Speed", "V", "Motion speed", GH_ParamAccess.item, 1.05));
                     Params.RegisterInputParam(Num("Acceleration", "A", "Motion acceleration", GH_ParamAccess.item, 1.4));
+                    Params.RegisterInputParam(Bool("Execute", "E", "Start sequence on rising edge (false->true)", false, false));
                     break;
 
                 case URActionKind.MoveL:
@@ -371,6 +637,7 @@ namespace UR.RTDE.Grasshopper
                     Params.RegisterInputParam(new Param_Plane { Name = "Target", NickName = "T", Description = "Target Plane (alternative to Pose)", Optional = true });
                     Params.RegisterInputParam(Num("Speed", "V", "Motion speed", GH_ParamAccess.item, 0.25));
                     Params.RegisterInputParam(Num("Acceleration", "A", "Motion acceleration", GH_ParamAccess.item, 1.2));
+                    Params.RegisterInputParam(Bool("Execute", "E", "Start sequence on rising edge (false->true)", false, false));
                     break;
 
                 case URActionKind.Stop:
@@ -391,13 +658,13 @@ namespace UR.RTDE.Grasshopper
         {
             URSession session;
             double decel;
-            
+
             lock (_sessionLock)
             {
                 session = _lastSession;
                 decel = _stopDecel;
             }
-            
+
             if (session == null || !session.IsConnected)
             {
                 RhinoApp.InvokeOnUiThread((Action)(() =>
@@ -413,22 +680,20 @@ namespace UR.RTDE.Grasshopper
                 bool okJ = false;
                 bool okL = false;
                 string error = null;
+
                 try { okJ = session.StopJ(decel); if (!okJ && session.LastError != null) error = session.LastError; }
                 catch (Exception ex) { error = ex.Message; }
+
                 try { okL = session.StopL(decel); if (!okL && session.LastError != null) error = session.LastError ?? error; }
                 catch (Exception ex) { error ??= ex.Message; }
 
                 bool ok = okJ || okL;
                 var message = ok ? $"Stop sent (decel {decel})" : $"Stop failed: {error ?? "Unknown error"}";
+                SetStoppedState(message, ok);
 
                 RhinoApp.InvokeOnUiThread((Action)(() =>
                 {
                     AddRuntimeMessage(ok ? GH_RuntimeMessageLevel.Remark : GH_RuntimeMessageLevel.Error, message);
-                    lock (_sessionLock)
-                    {
-                        _log.Clear();
-                        _log.Add($"{DateTime.Now:HH:mm:ss} - {message}");
-                    }
                     ExpireSolution(false);
                 }));
             });
@@ -448,7 +713,6 @@ namespace UR.RTDE.Grasshopper
 
         public override GH_Exposure Exposure => GH_Exposure.tertiary;
     }
-
     internal sealed class UR_CommandAttributes : GH_ComponentAttributes
     {
         private RectangleF _dropdownBounds;
