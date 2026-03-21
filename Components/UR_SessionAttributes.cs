@@ -176,7 +176,14 @@ namespace UR.RTDE.Grasshopper
                         }
                         else
                         {
-                            _owner._session.Connect(_owner._lastTimeoutMs);
+                            bool connected = _owner._session.Connect(_owner._lastTimeoutMs);
+                            if (!connected)
+                            {
+                                var message = string.IsNullOrWhiteSpace(_owner._session.LastError)
+                                    ? "Failed to connect"
+                                    : _owner._session.LastError;
+                                Owner.AddRuntimeMessage(GH_RuntimeMessageLevel.Error, message);
+                            }
                         }
                     }
                     catch (Exception ex)

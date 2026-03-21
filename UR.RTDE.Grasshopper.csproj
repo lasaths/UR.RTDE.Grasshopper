@@ -18,7 +18,7 @@
   
   <PropertyGroup>
     <!-- Specifies information for Assembly and Yak -->
-    <Version>1.3.1</Version>
+    <Version>1.3.2</Version>
     <PackageId>UR.RTDE.Grasshopper</PackageId>
     <Title>UR.RTDE.Grasshopper</Title>
     <Company>UR.RTDE</Company>
@@ -135,9 +135,11 @@
   <Target Name="CopyToGrasshopperLibraries" AfterTargets="CopyURRTDEDependencies" Condition="'$(Configuration)' != 'Test'">
   <PropertyGroup>
     <GrasshopperLibraryFolder>$(APPDATA)\Grasshopper\Libraries\UR.RTDE.Grasshopper</GrasshopperLibraryFolder>
+    <GrasshopperFrameworkFolder>$(GrasshopperLibraryFolder)\$(TargetFramework)</GrasshopperFrameworkFolder>
   </PropertyGroup>
   
   <MakeDir Directories="$(GrasshopperLibraryFolder)" Condition="!Exists('$(GrasshopperLibraryFolder)')" />
+  <RemoveDir Directories="$(GrasshopperFrameworkFolder)" Condition="'$(TargetFramework)' != '' and Exists('$(GrasshopperFrameworkFolder)')" />
   
   <ItemGroup>
     <FilesToCopy Include="$(OutputPath)**\*.*" />

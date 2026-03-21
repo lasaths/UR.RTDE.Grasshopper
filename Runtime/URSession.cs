@@ -1,4 +1,6 @@
 using System;
+using System.IO;
+using System.Reflection;
 using System.Threading;
 using UR.RTDE;
 
@@ -15,6 +17,7 @@ namespace UR.RTDE.Grasshopper
     {
         private const int DefaultRobotiqNativePort = 63352;
         private const int DefaultRobotiqScriptPort = 30002;
+        private static int _resolverRegistered;
 
         private readonly object _lockObj = new object();
         private UR.RTDE.RTDEControl _control;
@@ -25,6 +28,11 @@ namespace UR.RTDE.Grasshopper
         public string Ip { get; }
         public bool IsConnected => _isConnected;
         public string LastError { get; private set; }
+
+        static URSession()
+        {
+            RegisterAssemblyResolver();
+        }
 
         public URSession(string ip)
         {
@@ -191,36 +199,39 @@ namespace UR.RTDE.Grasshopper
 
         public bool RobotiqActivate(RobotiqBackend backend, bool autoCalibrate, int timeoutMs, bool installBridge, bool verbose, int port, out string message)
         {
-            switch (backend)
+            lock (_lockObj)
             {
-                case RobotiqBackend.Native:
-                    return RunRobotiqNative(port, verbose, timeoutMs, g =>
-                    {
-                        g.SetUnit(RobotiqMoveParameter.Position, RobotiqUnit.Device);
-                        g.SetUnit(RobotiqMoveParameter.Speed, RobotiqUnit.Device);
-                        g.SetUnit(RobotiqMoveParameter.Force, RobotiqUnit.Device);
-                        g.Activate(autoCalibrate);
-                        return (true, "Robotiq activated (native)");
-                    }, out message);
+                switch (backend)
+                {
+                    case RobotiqBackend.Native:
+                        return RunRobotiqNative(port, verbose, timeoutMs, g =>
+                        {
+                            g.SetUnit(RobotiqMoveParameter.Position, RobotiqUnit.Device);
+                            g.SetUnit(RobotiqMoveParameter.Speed, RobotiqUnit.Device);
+                            g.SetUnit(RobotiqMoveParameter.Force, RobotiqUnit.Device);
+                            g.Activate(autoCalibrate);
+                            return (true, "Robotiq activated (native)");
+                        }, out message);
 
-                case RobotiqBackend.RtdeBridge:
-                    return RunRobotiqRtde(installBridge, timeoutMs, async (g, ct) =>
-                    {
-                        await g.ActivateAsync(ct);
-                        return "Robotiq activated (RTDE bridge)";
-                    }, out message);
+                    case RobotiqBackend.RtdeBridge:
+                        return RunRobotiqRtde(installBridge, timeoutMs, async (g, ct) =>
+                        {
+                            await g.ActivateAsync(ct);
+                            return "Robotiq activated (RTDE bridge)";
+                        }, out message);
 
-                case RobotiqBackend.UrScript:
-                    return RunRobotiqScript(port, timeoutMs, async (g, ct) =>
-                    {
-                        await g.ActivateAsync(ct);
-                        return "Robotiq activated (URScript)";
-                    }, out message);
+                    case RobotiqBackend.UrScript:
+                        return RunRobotiqScript(port, timeoutMs, async (g, ct) =>
+                        {
+                            await g.ActivateAsync(ct);
+                            return "Robotiq activated (URScript)";
+                        }, out message);
 
-                default:
-                    message = "Unsupported backend";
-                    LastError = message;
-                    return false;
+                    default:
+                        message = "Unsupported backend";
+                        LastError = message;
+                        return false;
+                }
             }
         }
 
@@ -228,43 +239,47 @@ namespace UR.RTDE.Grasshopper
         {
             var s = ClampToDevice(speed);
             var f = ClampToDevice(force);
-            switch (backend)
+
+            lock (_lockObj)
             {
-                case RobotiqBackend.Native:
-                    return RunRobotiqNative(port, verbose, timeoutMs, g =>
-                    {
-                        g.SetUnit(RobotiqMoveParameter.Position, RobotiqUnit.Device);
-                        g.SetUnit(RobotiqMoveParameter.Speed, RobotiqUnit.Device);
-                        g.SetUnit(RobotiqMoveParameter.Force, RobotiqUnit.Device);
-                        g.SetSpeed(s);
-                        g.SetForce(f);
-                        var status = g.Open(s, f, waitForMotion ? RobotiqMoveMode.WaitFinished : RobotiqMoveMode.StartMove);
-                        var fault = g.FaultStatus();
-                        return NativeResult(status, fault, "open");
-                    }, out message);
+                switch (backend)
+                {
+                    case RobotiqBackend.Native:
+                        return RunRobotiqNative(port, verbose, timeoutMs, g =>
+                        {
+                            g.SetUnit(RobotiqMoveParameter.Position, RobotiqUnit.Device);
+                            g.SetUnit(RobotiqMoveParameter.Speed, RobotiqUnit.Device);
+                            g.SetUnit(RobotiqMoveParameter.Force, RobotiqUnit.Device);
+                            g.SetSpeed(s);
+                            g.SetForce(f);
+                            var status = g.Open(s, f, waitForMotion ? RobotiqMoveMode.WaitFinished : RobotiqMoveMode.StartMove);
+                            var fault = g.FaultStatus();
+                            return NativeResult(status, fault, "open");
+                        }, out message);
 
-                case RobotiqBackend.RtdeBridge:
-                    return RunRobotiqRtde(installBridge, timeoutMs, async (g, ct) =>
-                    {
-                        await g.SetSpeedAsync((byte)s, ct);
-                        await g.SetForceAsync((byte)f, ct);
-                        await g.OpenAsync(ct);
-                        return "Open sent (RTDE bridge)";
-                    }, out message);
+                    case RobotiqBackend.RtdeBridge:
+                        return RunRobotiqRtde(installBridge, timeoutMs, async (g, ct) =>
+                        {
+                            await g.SetSpeedAsync((byte)s, ct);
+                            await g.SetForceAsync((byte)f, ct);
+                            await g.OpenAsync(ct);
+                            return "Open sent (RTDE bridge)";
+                        }, out message);
 
-                case RobotiqBackend.UrScript:
-                    return RunRobotiqScript(port, timeoutMs, async (g, ct) =>
-                    {
-                        await g.SetSpeedAsync((byte)s, ct);
-                        await g.SetForceAsync((byte)f, ct);
-                        await g.OpenAsync(ct);
-                        return "Open sent (URScript)";
-                    }, out message);
+                    case RobotiqBackend.UrScript:
+                        return RunRobotiqScript(port, timeoutMs, async (g, ct) =>
+                        {
+                            await g.SetSpeedAsync((byte)s, ct);
+                            await g.SetForceAsync((byte)f, ct);
+                            await g.OpenAsync(ct);
+                            return "Open sent (URScript)";
+                        }, out message);
 
-                default:
-                    message = "Unsupported backend";
-                    LastError = message;
-                    return false;
+                    default:
+                        message = "Unsupported backend";
+                        LastError = message;
+                        return false;
+                }
             }
         }
 
@@ -272,43 +287,47 @@ namespace UR.RTDE.Grasshopper
         {
             var s = ClampToDevice(speed);
             var f = ClampToDevice(force);
-            switch (backend)
+
+            lock (_lockObj)
             {
-                case RobotiqBackend.Native:
-                    return RunRobotiqNative(port, verbose, timeoutMs, g =>
-                    {
-                        g.SetUnit(RobotiqMoveParameter.Position, RobotiqUnit.Device);
-                        g.SetUnit(RobotiqMoveParameter.Speed, RobotiqUnit.Device);
-                        g.SetUnit(RobotiqMoveParameter.Force, RobotiqUnit.Device);
-                        g.SetSpeed(s);
-                        g.SetForce(f);
-                        var status = g.Close(s, f, waitForMotion ? RobotiqMoveMode.WaitFinished : RobotiqMoveMode.StartMove);
-                        var fault = g.FaultStatus();
-                        return NativeResult(status, fault, "close");
-                    }, out message);
+                switch (backend)
+                {
+                    case RobotiqBackend.Native:
+                        return RunRobotiqNative(port, verbose, timeoutMs, g =>
+                        {
+                            g.SetUnit(RobotiqMoveParameter.Position, RobotiqUnit.Device);
+                            g.SetUnit(RobotiqMoveParameter.Speed, RobotiqUnit.Device);
+                            g.SetUnit(RobotiqMoveParameter.Force, RobotiqUnit.Device);
+                            g.SetSpeed(s);
+                            g.SetForce(f);
+                            var status = g.Close(s, f, waitForMotion ? RobotiqMoveMode.WaitFinished : RobotiqMoveMode.StartMove);
+                            var fault = g.FaultStatus();
+                            return NativeResult(status, fault, "close");
+                        }, out message);
 
-                case RobotiqBackend.RtdeBridge:
-                    return RunRobotiqRtde(installBridge, timeoutMs, async (g, ct) =>
-                    {
-                        await g.SetSpeedAsync((byte)s, ct);
-                        await g.SetForceAsync((byte)f, ct);
-                        await g.CloseAsync(ct);
-                        return "Close sent (RTDE bridge)";
-                    }, out message);
+                    case RobotiqBackend.RtdeBridge:
+                        return RunRobotiqRtde(installBridge, timeoutMs, async (g, ct) =>
+                        {
+                            await g.SetSpeedAsync((byte)s, ct);
+                            await g.SetForceAsync((byte)f, ct);
+                            await g.CloseAsync(ct);
+                            return "Close sent (RTDE bridge)";
+                        }, out message);
 
-                case RobotiqBackend.UrScript:
-                    return RunRobotiqScript(port, timeoutMs, async (g, ct) =>
-                    {
-                        await g.SetSpeedAsync((byte)s, ct);
-                        await g.SetForceAsync((byte)f, ct);
-                        await g.CloseAsync(ct);
-                        return "Close sent (URScript)";
-                    }, out message);
+                    case RobotiqBackend.UrScript:
+                        return RunRobotiqScript(port, timeoutMs, async (g, ct) =>
+                        {
+                            await g.SetSpeedAsync((byte)s, ct);
+                            await g.SetForceAsync((byte)f, ct);
+                            await g.CloseAsync(ct);
+                            return "Close sent (URScript)";
+                        }, out message);
 
-                default:
-                    message = "Unsupported backend";
-                    LastError = message;
-                    return false;
+                    default:
+                        message = "Unsupported backend";
+                        LastError = message;
+                        return false;
+                }
             }
         }
 
@@ -317,43 +336,47 @@ namespace UR.RTDE.Grasshopper
             var p = ClampToDevice(position);
             var s = ClampToDevice(speed);
             var f = ClampToDevice(force);
-            switch (backend)
+
+            lock (_lockObj)
             {
-                case RobotiqBackend.Native:
-                    return RunRobotiqNative(port, verbose, timeoutMs, g =>
-                    {
-                        g.SetUnit(RobotiqMoveParameter.Position, RobotiqUnit.Device);
-                        g.SetUnit(RobotiqMoveParameter.Speed, RobotiqUnit.Device);
-                        g.SetUnit(RobotiqMoveParameter.Force, RobotiqUnit.Device);
-                        g.SetSpeed(s);
-                        g.SetForce(f);
-                        var status = g.Move(p, s, f, waitForMotion ? RobotiqMoveMode.WaitFinished : RobotiqMoveMode.StartMove);
-                        var fault = g.FaultStatus();
-                        return NativeResult(status, fault, $"move to {p:0}");
-                    }, out message);
+                switch (backend)
+                {
+                    case RobotiqBackend.Native:
+                        return RunRobotiqNative(port, verbose, timeoutMs, g =>
+                        {
+                            g.SetUnit(RobotiqMoveParameter.Position, RobotiqUnit.Device);
+                            g.SetUnit(RobotiqMoveParameter.Speed, RobotiqUnit.Device);
+                            g.SetUnit(RobotiqMoveParameter.Force, RobotiqUnit.Device);
+                            g.SetSpeed(s);
+                            g.SetForce(f);
+                            var status = g.Move(p, s, f, waitForMotion ? RobotiqMoveMode.WaitFinished : RobotiqMoveMode.StartMove);
+                            var fault = g.FaultStatus();
+                            return NativeResult(status, fault, $"move to {p:0}");
+                        }, out message);
 
-                case RobotiqBackend.RtdeBridge:
-                    return RunRobotiqRtde(installBridge, timeoutMs, async (g, ct) =>
-                    {
-                        await g.SetSpeedAsync((byte)s, ct);
-                        await g.SetForceAsync((byte)f, ct);
-                        await g.MoveAsync((byte)p, ct);
-                        return $"Move {p:0} sent (RTDE bridge)";
-                    }, out message);
+                    case RobotiqBackend.RtdeBridge:
+                        return RunRobotiqRtde(installBridge, timeoutMs, async (g, ct) =>
+                        {
+                            await g.SetSpeedAsync((byte)s, ct);
+                            await g.SetForceAsync((byte)f, ct);
+                            await g.MoveAsync((byte)p, ct);
+                            return $"Move {p:0} sent (RTDE bridge)";
+                        }, out message);
 
-                case RobotiqBackend.UrScript:
-                    return RunRobotiqScript(port, timeoutMs, async (g, ct) =>
-                    {
-                        await g.SetSpeedAsync((byte)s, ct);
-                        await g.SetForceAsync((byte)f, ct);
-                        await g.MoveAsync((byte)p, ct);
-                        return $"Move {p:0} sent (URScript)";
-                    }, out message);
+                    case RobotiqBackend.UrScript:
+                        return RunRobotiqScript(port, timeoutMs, async (g, ct) =>
+                        {
+                            await g.SetSpeedAsync((byte)s, ct);
+                            await g.SetForceAsync((byte)f, ct);
+                            await g.MoveAsync((byte)p, ct);
+                            return $"Move {p:0} sent (URScript)";
+                        }, out message);
 
-                default:
-                    message = "Unsupported backend";
-                    LastError = message;
-                    return false;
+                    default:
+                        message = "Unsupported backend";
+                        LastError = message;
+                        return false;
+                }
             }
         }
 
@@ -502,6 +525,38 @@ namespace UR.RTDE.Grasshopper
         {
             if (double.IsNaN(value) || double.IsInfinity(value)) value = 0;
             return (float)Math.Max(0, Math.Min(255, value));
+        }
+
+        private static void RegisterAssemblyResolver()
+        {
+            if (Interlocked.Exchange(ref _resolverRegistered, 1) != 0)
+                return;
+
+            AppDomain.CurrentDomain.AssemblyResolve += ResolveSiblingAssembly;
+        }
+
+        private static Assembly ResolveSiblingAssembly(object sender, ResolveEventArgs args)
+        {
+            try
+            {
+                var requestedName = new AssemblyName(args.Name).Name;
+                if (string.IsNullOrWhiteSpace(requestedName))
+                    return null;
+
+                var assemblyDir = Path.GetDirectoryName(typeof(URSession).Assembly.Location);
+                if (string.IsNullOrWhiteSpace(assemblyDir))
+                    return null;
+
+                var candidatePath = Path.Combine(assemblyDir, requestedName + ".dll");
+                if (!File.Exists(candidatePath))
+                    return null;
+
+                return Assembly.LoadFrom(candidatePath);
+            }
+            catch
+            {
+                return null;
+            }
         }
 
     }

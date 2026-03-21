@@ -745,6 +745,17 @@ namespace UR.RTDE.Grasshopper
             ExpireSolution(true);
         }
 
+        internal bool IsMotionAction()
+        {
+            return _action == URActionKind.MoveJ || _action == URActionKind.MoveL;
+        }
+
+        internal bool IsAutoSendEnabled()
+        {
+            lock (_stateLock)
+                return _autoSend;
+        }
+
         private void ResetMotionTriggerState()
         {
             lock (_stateLock)
@@ -849,8 +860,14 @@ namespace UR.RTDE.Grasshopper
 
         internal void TriggerRunFromButton()
         {
-            if (_action != URActionKind.MoveJ && _action != URActionKind.MoveL)
+            if (!IsMotionAction())
                 return;
+
+            if (IsAutoSendEnabled())
+            {
+                ToggleAutoSend();
+                return;
+            }
 
             lock (_stateLock)
             {
@@ -1015,9 +1032,12 @@ namespace UR.RTDE.Grasshopper
             graphics.SmoothingMode = SmoothingMode.AntiAlias;
             var scale = GH_GraphicsUtil.UiScale <= 0 ? 1f : GH_GraphicsUtil.UiScale;
 
-            if ((CommandComponent._action == URActionKind.MoveJ || CommandComponent._action == URActionKind.MoveL) && !_runButtonBounds.IsEmpty)
+            if (CommandComponent.IsMotionAction() && !_runButtonBounds.IsEmpty)
             {
-                var runBg = Color.FromArgb(16, 185, 129);
+                var isAutoSend = CommandComponent.IsAutoSendEnabled();
+                var runBg = isAutoSend
+                    ? Color.FromArgb(245, 158, 11)
+                    : Color.FromArgb(16, 185, 129);
                 if (_runMouseDown) runBg = Darken(runBg, 0.2);
                 else if (_runMouseOver) runBg = Color.FromArgb(
                     Math.Min(255, runBg.R + 20),
@@ -1032,7 +1052,7 @@ namespace UR.RTDE.Grasshopper
                 }
 
                 var buttonFont = new Font(GH_FontServer.Standard.FontFamily, GH_FontServer.Standard.Size / scale, FontStyle.Bold);
-                graphics.DrawString("RUN", buttonFont, Brushes.White, _runButtonBounds, GH_TextRenderingConstants.CenterCenter);
+                graphics.DrawString(isAutoSend ? "AUTO-SENT" : "RUN", buttonFont, Brushes.White, _runButtonBounds, GH_TextRenderingConstants.CenterCenter);
                 buttonFont.Dispose();
             }
 

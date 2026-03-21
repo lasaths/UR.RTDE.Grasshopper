@@ -1,7 +1,7 @@
 # UR.RTDE.Grasshopper
 
 [![Yak Package](https://img.shields.io/badge/yak-UR--RTDE--Grasshopper-blue)](https://yak.rhino3d.com/packages/UR-RTDE-Grasshopper)
-[![Version](https://img.shields.io/badge/version-1.3.1-blue)](https://yak.rhino3d.com/packages/UR-RTDE-Grasshopper)
+[![Version](https://img.shields.io/badge/version-1.3.2-blue)](https://yak.rhino3d.com/packages/UR-RTDE-Grasshopper)
 [![Rhino](https://img.shields.io/badge/Rhino-7%20%26%208-green)](https://www.rhino3d.com/)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
@@ -243,6 +243,7 @@ Before connecting to a real robot, always test with URSim.
    - Set `ip` to `127.0.0.1` (localhost)
    - For URSim on another computer, use that host's IP
    - RTDE port `30004` is handled automatically
+   - Enable **Remote Control** in PolyScope before trying motion/control commands from the plugin
 
 **Important Notes:**
 - For reading state, URSim can be idle

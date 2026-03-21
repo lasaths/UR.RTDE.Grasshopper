@@ -1,26 +1,70 @@
 using System;
 using System.Drawing;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 using Grasshopper.Kernel;
 using Grasshopper.Kernel.Attributes;
 using Grasshopper.GUI;
 using Grasshopper.GUI.Canvas;
 using Grasshopper.Kernel.Parameters;
+using Rhino;
 
 namespace UR.RTDE.Grasshopper
 {
     public class UR_GripperComponent : GH_Component
     {
+        private readonly object _stateLock = new object();
+        private readonly object _sessionLock = new object();
         private RobotiqBackend _backend = RobotiqBackend.Native;
-        private bool _isActivated = false;
+        private URSession _lastSession;
+        private bool _isActivated;
         private bool _isOpen = true; // true = open, false = closed
+        private bool _isBusy;
+        private bool _lastOk;
+        private string _lastMessage = "No session";
+        private double _cachedPosition;
+        private double _cachedSpeed = 128.0;
+        private double _cachedForce = 128.0;
+        private bool _positionInitialized;
+        private double _lastPosition;
+        private bool _hasQueuedMove;
+        private MoveRequest _queuedMove;
 
-        public bool IsActivated => _isActivated;
-        public bool IsOpen => _isOpen;
+        public bool IsActivated
+        {
+            get
+            {
+                lock (_stateLock)
+                    return _isActivated;
+            }
+        }
+
+        public bool IsOpen
+        {
+            get
+            {
+                lock (_stateLock)
+                    return _isOpen;
+            }
+        }
+
+        private readonly struct MoveRequest
+        {
+            public MoveRequest(double position, double speed, double force)
+            {
+                Position = position;
+                Speed = speed;
+                Force = force;
+            }
+
+            public double Position { get; }
+            public double Speed { get; }
+            public double Force { get; }
+        }
 
         public UR_GripperComponent()
           : base("UR Robotiq Gripper", "URGripper",
-            "Control a Robotiq gripper via UR.RTDE. Use buttons to Activate and Open/Close.",
+            "Control a Robotiq gripper via UR.RTDE. Use buttons to Activate and Open/Close, or drive Position directly.",
             "UR", "RTDE")
         {
         }
@@ -50,157 +94,127 @@ namespace UR.RTDE.Grasshopper
 
         protected override void SolveInstance(IGH_DataAccess da)
         {
-            Message = $"{_backend}";
-            
             URSessionGoo goo = null;
-            if (!da.GetData(0, ref goo))
-            {
-                da.SetData(0, false);
-                da.SetData(1, "No session");
-                da.SetData(2, _isActivated);
-                da.SetData(3, _isOpen);
-                return;
-            }
-
+            bool hasSession = da.GetData(0, ref goo);
             var session = goo?.Value;
-            if (session == null || !session.IsConnected)
-            {
-                da.SetData(0, false);
-                da.SetData(1, "Session not connected");
-                da.SetData(2, _isActivated);
-                da.SetData(3, _isOpen);
-                return;
-            }
-
-            // Get position, speed, force
             double position = 0, speed = 128, force = 128;
             da.GetData(1, ref position);
             da.GetData(2, ref speed);
             da.GetData(3, ref force);
 
-            // Clamp values
-            position = Math.Max(0, Math.Min(255, position));
-            speed = Math.Max(0, Math.Min(255, speed));
-            force = Math.Max(0, Math.Min(255, force));
+            position = ClampInput(position);
+            speed = ClampInput(speed);
+            force = ClampInput(force);
 
-            // Output current state
-            da.SetData(0, true);
-            da.SetData(1, "Ready");
-            da.SetData(2, _isActivated);
-            da.SetData(3, _isOpen);
+            CacheInputs(position, speed, force);
+
+            if (!hasSession || session == null || !session.IsConnected)
+            {
+                ClearRememberedSession();
+                ResetSessionState(hasSession ? "Session not connected" : "No session");
+                Message = $"{_backend}";
+                WriteOutputs(da);
+                return;
+            }
+
+            RememberSession(session);
+            ProcessPositionChange(session, position, speed, force);
+
+            Message = GetCanvasMessage();
+            WriteOutputs(da);
         }
 
         internal void PerformActivate(URSession session)
         {
-            if (session == null || !session.IsConnected) return;
+            if (!TryGetConnectedSession(session, out session))
+            {
+                ReportImmediateFailure("Session not connected", GH_RuntimeMessageLevel.Warning);
+                return;
+            }
 
-            try
+            if (!TryBeginCommand("Activating gripper"))
             {
-                bool install = _backend == RobotiqBackend.RtdeBridge;
-                int port = DefaultPort();
-                bool ok = session.RobotiqActivate(_backend, autoCalibrate: true, timeoutMs: 4000, installBridge: install, verbose: false, port: port, out string msg);
-                
-                if (ok)
-                {
-                    _isActivated = true;
-                    AddRuntimeMessage(GH_RuntimeMessageLevel.Remark, "Gripper activated");
-                }
-                else
-                {
-                    AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, $"Activation failed: {msg}");
-                }
-                
-                ExpireSolution(true);
+                ReportImmediateFailure("Gripper is busy", GH_RuntimeMessageLevel.Warning);
+                return;
             }
-            catch (Exception ex)
+
+            ExpireSolution(true);
+
+            var backend = _backend;
+            bool install = backend == RobotiqBackend.RtdeBridge;
+            int port = DefaultPort(backend);
+
+            Task.Run(() =>
             {
-                AddRuntimeMessage(GH_RuntimeMessageLevel.Error, $"Activation error: {ex.Message}");
-            }
+                bool ok;
+                string message;
+
+                try
+                {
+                    ok = session.RobotiqActivate(backend, autoCalibrate: true, timeoutMs: 4000, installBridge: install, verbose: false, port: port, out string detail);
+                    message = ok ? "Gripper activated" : $"Activation failed: {detail}";
+                }
+                catch (Exception ex)
+                {
+                    ok = false;
+                    message = $"Activation error: {ex.Message}";
+                }
+
+                CompleteCommand(session, ok, message, () => _isActivated = true, emitSuccessRuntimeMessage: true, failureLevel: GH_RuntimeMessageLevel.Warning);
+            });
         }
 
         internal void PerformOpenClose(URSession session, bool open)
         {
-            if (session == null || !session.IsConnected) return;
-
-            try
+            if (!TryGetConnectedSession(session, out session))
             {
-                // Get current speed and force from inputs
-                double speed = 128, force = 128;
-                if (Params.Input.Count > 2)
-                {
-                    var speedParam = Params.Input[2];
-                    var forceParam = Params.Input[3];
-                    
-                    if (speedParam.SourceCount > 0 && speedParam.VolatileData.DataCount > 0)
-                    {
-                        var speedGoo = speedParam.VolatileData.get_Branch(0)[0] as global::Grasshopper.Kernel.Types.GH_Number;
-                        if (speedGoo != null) speed = speedGoo.Value;
-                    }
-                    if (forceParam.SourceCount > 0 && forceParam.VolatileData.DataCount > 0)
-                    {
-                        var forceGoo = forceParam.VolatileData.get_Branch(0)[0] as global::Grasshopper.Kernel.Types.GH_Number;
-                        if (forceGoo != null) force = forceGoo.Value;
-                    }
-                }
+                ReportImmediateFailure("Session not connected", GH_RuntimeMessageLevel.Warning);
+                return;
+            }
 
-                bool install = _backend == RobotiqBackend.RtdeBridge;
-                int port = DefaultPort();
+            if (!TryBeginCommand(open ? "Opening gripper" : "Closing gripper"))
+            {
+                ReportImmediateFailure("Gripper is busy", GH_RuntimeMessageLevel.Warning);
+                return;
+            }
+
+            ExpireSolution(true);
+
+            var backend = _backend;
+            var inputs = GetCachedInputs();
+            bool install = backend == RobotiqBackend.RtdeBridge;
+            int port = DefaultPort(backend);
+
+            Task.Run(() =>
+            {
                 bool ok;
-                string msg;
+                string message;
 
-                if (open)
+                try
                 {
-                    ok = session.RobotiqOpen(_backend, speed, force, waitForMotion: true, timeoutMs: 4000, installBridge: install, verbose: false, port: port, out msg);
+                    if (open)
+                    {
+                        ok = session.RobotiqOpen(backend, inputs.Speed, inputs.Force, waitForMotion: true, timeoutMs: 4000, installBridge: install, verbose: false, port: port, out string detail);
+                        message = ok ? "Gripper opened" : $"Command failed: {detail}";
+                    }
+                    else
+                    {
+                        ok = session.RobotiqClose(backend, inputs.Speed, inputs.Force, waitForMotion: true, timeoutMs: 4000, installBridge: install, verbose: false, port: port, out string detail);
+                        message = ok ? "Gripper closed" : $"Command failed: {detail}";
+                    }
                 }
-                else
+                catch (Exception ex)
                 {
-                    ok = session.RobotiqClose(_backend, speed, force, waitForMotion: true, timeoutMs: 4000, installBridge: install, verbose: false, port: port, out msg);
+                    ok = false;
+                    message = $"Command error: {ex.Message}";
                 }
 
-                if (ok)
+                CompleteCommand(session, ok, message, () =>
                 {
+                    _isActivated = true;
                     _isOpen = open;
-                    AddRuntimeMessage(GH_RuntimeMessageLevel.Remark, open ? "Gripper opened" : "Gripper closed");
-                }
-                else
-                {
-                    AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, $"Command failed: {msg}");
-                }
-
-                ExpireSolution(true);
-            }
-            catch (Exception ex)
-            {
-                AddRuntimeMessage(GH_RuntimeMessageLevel.Error, $"Command error: {ex.Message}");
-            }
-        }
-
-        internal void PerformMove(URSession session, double position, double speed, double force)
-        {
-            if (session == null || !session.IsConnected) return;
-
-            try
-            {
-                bool install = _backend == RobotiqBackend.RtdeBridge;
-                int port = DefaultPort();
-                bool ok = session.RobotiqMove(_backend, position, speed, force, waitForMotion: true, timeoutMs: 4000, installBridge: install, verbose: false, port: port, out string msg);
-
-                if (ok)
-                {
-                    _isOpen = position < 128; // Approximate state
-                    AddRuntimeMessage(GH_RuntimeMessageLevel.Remark, $"Moved to position {position:F0}");
-                }
-                else
-                {
-                    AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, $"Move failed: {msg}");
-                }
-
-                ExpireSolution(true);
-            }
-            catch (Exception ex)
-            {
-                AddRuntimeMessage(GH_RuntimeMessageLevel.Error, $"Move error: {ex.Message}");
-            }
+                }, emitSuccessRuntimeMessage: true, failureLevel: GH_RuntimeMessageLevel.Warning);
+            });
         }
 
         protected override System.Drawing.Bitmap Icon
@@ -231,22 +245,261 @@ namespace UR.RTDE.Grasshopper
         public override bool Write(GH_IO.Serialization.GH_IWriter writer)
         {
             writer.SetInt32("robotiq_backend", (int)_backend);
-            writer.SetBoolean("is_activated", _isActivated);
-            writer.SetBoolean("is_open", _isOpen);
             return base.Write(writer);
         }
 
         public override bool Read(GH_IO.Serialization.GH_IReader reader)
         {
             if (reader.ItemExists("robotiq_backend")) _backend = (RobotiqBackend)reader.GetInt32("robotiq_backend");
-            if (reader.ItemExists("is_activated")) _isActivated = reader.GetBoolean("is_activated");
-            if (reader.ItemExists("is_open")) _isOpen = reader.GetBoolean("is_open");
+            ClearRememberedSession();
+            ResetSessionState("No session");
             return base.Read(reader);
         }
 
-        private int DefaultPort()
+        internal bool TryGetConnectedSession(out URSession session)
         {
-            return _backend switch
+            lock (_sessionLock)
+            {
+                session = _lastSession;
+                return session != null && session.IsConnected;
+            }
+        }
+
+        private static double ClampInput(double value)
+        {
+            if (double.IsNaN(value) || double.IsInfinity(value))
+                return 0.0;
+
+            return Math.Max(0.0, Math.Min(255.0, value));
+        }
+
+        private void CacheInputs(double position, double speed, double force)
+        {
+            lock (_stateLock)
+            {
+                _cachedPosition = position;
+                _cachedSpeed = speed;
+                _cachedForce = force;
+            }
+        }
+
+        private void RememberSession(URSession session)
+        {
+            lock (_sessionLock)
+            {
+                if (!ReferenceEquals(_lastSession, session))
+                {
+                    _lastSession = session;
+                    ResetSessionState("Ready");
+                }
+            }
+        }
+
+        private void ClearRememberedSession()
+        {
+            lock (_sessionLock)
+                _lastSession = null;
+        }
+
+        private void ResetSessionState(string message)
+        {
+            lock (_stateLock)
+            {
+                _isActivated = false;
+                _isOpen = true;
+                _isBusy = false;
+                _lastOk = false;
+                _lastMessage = message;
+                _positionInitialized = false;
+                _hasQueuedMove = false;
+                _queuedMove = default;
+            }
+        }
+
+        private void ProcessPositionChange(URSession session, double position, double speed, double force)
+        {
+            bool shouldStartMove = false;
+
+            lock (_stateLock)
+            {
+                if (!_positionInitialized)
+                {
+                    _positionInitialized = true;
+                    _lastPosition = position;
+                    if (string.IsNullOrWhiteSpace(_lastMessage) || _lastMessage == "No session" || _lastMessage == "Session not connected")
+                        _lastMessage = "Ready";
+                    return;
+                }
+
+                if (Math.Abs(_lastPosition - position) <= 1e-6)
+                    return;
+
+                _lastPosition = position;
+
+                if (_isBusy)
+                {
+                    _hasQueuedMove = true;
+                    _queuedMove = new MoveRequest(position, speed, force);
+                    _lastOk = false;
+                    _lastMessage = $"Queued move to {position:0}";
+                    return;
+                }
+
+                _isBusy = true;
+                _lastOk = false;
+                _lastMessage = $"Moving to {position:0}";
+                shouldStartMove = true;
+            }
+
+            if (shouldStartMove)
+                RunPositionMoveAsync(session, position, speed, force);
+        }
+
+        private bool TryGetConnectedSession(URSession candidate, out URSession session)
+        {
+            if (candidate != null && candidate.IsConnected)
+            {
+                session = candidate;
+                RememberSession(candidate);
+                return true;
+            }
+
+            return TryGetConnectedSession(out session);
+        }
+
+        private bool TryBeginCommand(string message)
+        {
+            lock (_stateLock)
+            {
+                if (_isBusy)
+                    return false;
+
+                _isBusy = true;
+                _lastOk = false;
+                _lastMessage = message;
+                return true;
+            }
+        }
+
+        private (double Position, double Speed, double Force) GetCachedInputs()
+        {
+            lock (_stateLock)
+                return (_cachedPosition, _cachedSpeed, _cachedForce);
+        }
+
+        private void RunPositionMoveAsync(URSession session, double position, double speed, double force)
+        {
+            var backend = _backend;
+            bool install = backend == RobotiqBackend.RtdeBridge;
+            int port = DefaultPort(backend);
+
+            Task.Run(() =>
+            {
+                bool ok;
+                string message;
+
+                try
+                {
+                    ok = session.RobotiqMove(backend, position, speed, force, waitForMotion: false, timeoutMs: 4000, installBridge: install, verbose: false, port: port, out string detail);
+                    message = ok ? $"Moved to position {position:0}" : $"Move failed: {detail}";
+                }
+                catch (Exception ex)
+                {
+                    ok = false;
+                    message = $"Move error: {ex.Message}";
+                }
+
+                CompleteCommand(session, ok, message, () =>
+                {
+                    _isActivated = true;
+                    _isOpen = position < 128.0;
+                }, emitSuccessRuntimeMessage: false, failureLevel: GH_RuntimeMessageLevel.Warning);
+            });
+        }
+
+        private void CompleteCommand(URSession session, bool ok, string message, Action applySuccessState, bool emitSuccessRuntimeMessage, GH_RuntimeMessageLevel failureLevel)
+        {
+            MoveRequest nextMove = default;
+            bool startQueuedMove = false;
+
+            lock (_stateLock)
+            {
+                _isBusy = false;
+                _lastOk = ok;
+                _lastMessage = message;
+
+                if (ok)
+                    applySuccessState?.Invoke();
+
+                if (ok && _hasQueuedMove && session != null && session.IsConnected)
+                {
+                    nextMove = _queuedMove;
+                    _hasQueuedMove = false;
+                    _isBusy = true;
+                    _lastOk = false;
+                    _lastMessage = $"Moving to {nextMove.Position:0}";
+                    startQueuedMove = true;
+                }
+                else
+                {
+                    _hasQueuedMove = false;
+                }
+            }
+
+            RhinoApp.InvokeOnUiThread((Action)(() =>
+            {
+                if (!ok || emitSuccessRuntimeMessage)
+                    AddRuntimeMessage(ok ? GH_RuntimeMessageLevel.Remark : failureLevel, message);
+
+                ExpireSolution(false);
+            }));
+
+            if (startQueuedMove)
+                RunPositionMoveAsync(session, nextMove.Position, nextMove.Speed, nextMove.Force);
+        }
+
+        private void ReportImmediateFailure(string message, GH_RuntimeMessageLevel level)
+        {
+            lock (_stateLock)
+            {
+                _lastOk = false;
+                _lastMessage = message;
+            }
+
+            AddRuntimeMessage(level, message);
+            ExpireSolution(false);
+        }
+
+        private string GetCanvasMessage()
+        {
+            lock (_stateLock)
+                return _isBusy ? $"{_backend}..." : $"{_backend}";
+        }
+
+        private void WriteOutputs(IGH_DataAccess da)
+        {
+            bool ok;
+            string message;
+            bool activated;
+            bool isOpen;
+
+            lock (_stateLock)
+            {
+                ok = !_isBusy && _lastOk;
+                message = _lastMessage;
+                activated = _isActivated;
+                isOpen = _isOpen;
+            }
+
+            da.SetData(0, ok);
+            da.SetData(1, message);
+            da.SetData(2, activated);
+            da.SetData(3, isOpen);
+        }
+
+        private static int DefaultPort(RobotiqBackend backend)
+        {
+            return backend switch
             {
                 RobotiqBackend.UrScript => 30002,
                 RobotiqBackend.Native => 63352,
@@ -468,27 +721,12 @@ namespace UR.RTDE.Grasshopper
                     _openMouseOver = false;
                     _closeMouseOver = false;
                     global::Grasshopper.Instances.CursorServer.ResetCursor(sender);
-                    
-                    // Get session from first input
-                    URSession session = null;
-                    if (Owner.Params.Input.Count > 0)
-                    {
-                        var sessionParam = Owner.Params.Input[0];
-                        if (sessionParam.SourceCount > 0 && sessionParam.VolatileData.DataCount > 0)
-                        {
-                            var goo = sessionParam.VolatileData.get_Branch(0)[0] as URSessionGoo;
-                            session = goo?.Value;
-                        }
-                    }
-
-                    if (session != null && session.IsConnected)
-                    {
+                    if (GripperComponent.TryGetConnectedSession(out var session))
                         GripperComponent.PerformActivate(session);
-                    }
                     else
                     {
                         Owner.AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, "Session not connected");
-                        Owner.ExpireSolution(true);
+                        Owner.ExpireSolution(false);
                     }
                     return GH_ObjectResponse.Release;
                 }
@@ -499,27 +737,12 @@ namespace UR.RTDE.Grasshopper
                     _openMouseOver = false;
                     _closeMouseOver = false;
                     global::Grasshopper.Instances.CursorServer.ResetCursor(sender);
-                    
-                    // Get session from first input
-                    URSession session = null;
-                    if (Owner.Params.Input.Count > 0)
-                    {
-                        var sessionParam = Owner.Params.Input[0];
-                        if (sessionParam.SourceCount > 0 && sessionParam.VolatileData.DataCount > 0)
-                        {
-                            var goo = sessionParam.VolatileData.get_Branch(0)[0] as URSessionGoo;
-                            session = goo?.Value;
-                        }
-                    }
-
-                    if (session != null && session.IsConnected)
-                    {
-                        GripperComponent.PerformOpenClose(session, true); // Open = true
-                    }
+                    if (GripperComponent.TryGetConnectedSession(out var session))
+                        GripperComponent.PerformOpenClose(session, true);
                     else
                     {
                         Owner.AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, "Session not connected");
-                        Owner.ExpireSolution(true);
+                        Owner.ExpireSolution(false);
                     }
                     return GH_ObjectResponse.Release;
                 }
@@ -530,27 +753,12 @@ namespace UR.RTDE.Grasshopper
                     _openMouseOver = false;
                     _closeMouseOver = false;
                     global::Grasshopper.Instances.CursorServer.ResetCursor(sender);
-                    
-                    // Get session from first input
-                    URSession session = null;
-                    if (Owner.Params.Input.Count > 0)
-                    {
-                        var sessionParam = Owner.Params.Input[0];
-                        if (sessionParam.SourceCount > 0 && sessionParam.VolatileData.DataCount > 0)
-                        {
-                            var goo = sessionParam.VolatileData.get_Branch(0)[0] as URSessionGoo;
-                            session = goo?.Value;
-                        }
-                    }
-
-                    if (session != null && session.IsConnected)
-                    {
-                        GripperComponent.PerformOpenClose(session, false); // Close = false
-                    }
+                    if (GripperComponent.TryGetConnectedSession(out var session))
+                        GripperComponent.PerformOpenClose(session, false);
                     else
                     {
                         Owner.AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, "Session not connected");
-                        Owner.ExpireSolution(true);
+                        Owner.ExpireSolution(false);
                     }
                     return GH_ObjectResponse.Release;
                 }
