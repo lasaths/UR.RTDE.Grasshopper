@@ -69,21 +69,12 @@ namespace UR.RTDE.Grasshopper
         public bool MoveJ(double[] q, double speed, double acceleration, bool asynchronous)
         {
             if (q == null || q.Length != 6) throw new ArgumentException("q must be length 6", nameof(q));
-            
-            bool result;
+
             lock (_lockObj)
             {
                 if (_control == null) throw new InvalidOperationException("Not connected");
-                result = InvokeControlBool("MoveJ", new object[] { q, speed, acceleration, asynchronous });
+                return InvokeControlBool("MoveJ", new object[] { q, speed, acceleration, asynchronous });
             }
-            
-            // If synchronous, wait for the move to complete (outside lock so reads can continue)
-            if (!asynchronous && result)
-            {
-                WaitForMoveComplete();
-            }
-            
-            return result;
         }
 
         public bool StopJ(double deceleration)
@@ -91,7 +82,7 @@ namespace UR.RTDE.Grasshopper
             lock (_lockObj)
             {
                 if (_control == null) throw new InvalidOperationException("Not connected");
-                return InvokeControlBool("StopJ", new object[] { deceleration });
+                return InvokeControlBool("StopJ", new object[] { deceleration, true });
             }
         }
 
@@ -100,28 +91,19 @@ namespace UR.RTDE.Grasshopper
             lock (_lockObj)
             {
                 if (_control == null) throw new InvalidOperationException("Not connected");
-                return InvokeControlBool("StopL", new object[] { deceleration });
+                return InvokeControlBool("StopL", new object[] { deceleration, true });
             }
         }
 
         public bool MoveL(double[] pose, double speed, double acceleration, bool asynchronous)
         {
             if (pose == null || pose.Length != 6) throw new ArgumentException("pose must be length 6", nameof(pose));
-            
-            bool result;
+
             lock (_lockObj)
             {
                 if (_control == null) throw new InvalidOperationException("Not connected");
-                result = InvokeControlBool("MoveL", new object[] { pose, speed, acceleration, asynchronous });
+                return InvokeControlBool("MoveL", new object[] { pose, speed, acceleration, asynchronous });
             }
-            
-            // If synchronous, wait for the move to complete (outside lock so reads can continue)
-            if (!asynchronous && result)
-            {
-                WaitForMoveComplete();
-            }
-            
-            return result;
         }
 
         public bool SetStandardDigitalOut(int pin, bool value)
@@ -427,6 +409,7 @@ namespace UR.RTDE.Grasshopper
                     return false;
                 }
                 var result = mi.Invoke(_control, args);
+                LastError = null;
                 if (mi.ReturnType == typeof(bool))
                     return result is bool b && b;
                 return true; // treat void as success if no exception thrown
@@ -521,89 +504,5 @@ namespace UR.RTDE.Grasshopper
             return (float)Math.Max(0, Math.Min(255, value));
         }
 
-        /// <summary>
-        /// Waits for the robot to complete its current move.
-        /// Called outside the lock so reads can continue during the wait.
-        /// </summary>
-        private void WaitForMoveComplete()
-        {
-            if (_receive == null) return;
-            
-            // First, wait for the robot to start moving (velocity > threshold)
-            // This prevents detecting "stopped" before the move even begins
-            Thread.Sleep(100); // Give time for the move command to be processed
-            
-            bool moveStarted = false;
-            int startTimeout = 200; // 2 seconds to detect move start (10ms * 200)
-            
-            for (int i = 0; i < startTimeout && !moveStarted; i++)
-            {
-                try
-                {
-                    var velocities = InvokeReceive<double[]>(new[] { "GetActualQd" });
-                    if (velocities != null)
-                    {
-                        foreach (var v in velocities)
-                        {
-                            if (Math.Abs(v) > 0.01) // Robot is moving
-                            {
-                                moveStarted = true;
-                                break;
-                            }
-                        }
-                    }
-                }
-                catch { }
-                
-                if (!moveStarted)
-                    Thread.Sleep(10);
-            }
-            
-            // If move never started, maybe target was already reached or command failed
-            if (!moveStarted)
-                return;
-            
-            // Now wait for the robot to stop (all velocities near zero)
-            int maxAttempts = 6000; // 60 seconds max (10ms * 6000)
-            int stoppedCount = 0; // Require multiple consecutive "stopped" readings
-            const int requiredStoppedReadings = 5;
-            
-            for (int i = 0; i < maxAttempts; i++)
-            {
-                try
-                {
-                    var velocities = InvokeReceive<double[]>(new[] { "GetActualQd" });
-                    if (velocities != null)
-                    {
-                        bool allStopped = true;
-                        foreach (var v in velocities)
-                        {
-                            if (Math.Abs(v) > 0.001) // Threshold for "stopped"
-                            {
-                                allStopped = false;
-                                break;
-                            }
-                        }
-                        
-                        if (allStopped)
-                        {
-                            stoppedCount++;
-                            if (stoppedCount >= requiredStoppedReadings)
-                                return; // Confirmed stopped
-                        }
-                        else
-                        {
-                            stoppedCount = 0; // Reset counter if still moving
-                        }
-                    }
-                }
-                catch
-                {
-                    // If we can't read velocities, just continue waiting
-                }
-                
-                Thread.Sleep(10);
-            }
-        }
     }
 }

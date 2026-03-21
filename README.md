@@ -1,7 +1,7 @@
 # UR.RTDE.Grasshopper
 
 [![Yak Package](https://img.shields.io/badge/yak-UR--RTDE--Grasshopper-blue)](https://yak.rhino3d.com/packages/UR-RTDE-Grasshopper)
-[![Version](https://img.shields.io/badge/version-1.3.0-blue)](https://yak.rhino3d.com/packages/UR-RTDE-Grasshopper)
+[![Version](https://img.shields.io/badge/version-1.3.1-blue)](https://yak.rhino3d.com/packages/UR-RTDE-Grasshopper)
 [![Rhino](https://img.shields.io/badge/Rhino-7%20%26%208-green)](https://www.rhino3d.com/)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
@@ -17,15 +17,15 @@ Release 1.3.0 ships dedicated Yak packages for both Rhino 7 (`rh7_0`) and Rhino 
 ✅ **High-frequency updates** - Can handle 20-50ms intervals smoothly  
 ✅ **No stuttering** - Consistent performance during auto-listen  
 
-### UR Command (Simplified)
-✅ **Direct execution** - Simple, straightforward command sending  
-✅ **Async option** - Fire-and-forget for non-blocking robot moves  
-✅ **Synchronous by default** - Immediate feedback on command completion  
-✅ **Clean & maintainable** - No complex async framework overhead  
+### UR Write
+✅ **Run button for motion** - MoveJ and MoveL are sent explicitly from the component UI  
+✅ **Optional Auto Send** - Right-click to arm automatic sends on new target input  
+✅ **Auto Send resets for safety** - Not persisted with the component state  
+✅ **Clean & maintainable** - Direct command execution with a simple UI trigger model  
 
 ✅ **Fully backward compatible** - existing .gh files work without changes  
 
-> **Technical**: Both components use simple, proven patterns without heavy frameworks - event-driven polling for Read, direct execution with optional async for Command
+> **Technical**: Both components use simple, proven patterns without heavy frameworks: event-driven polling for Read and direct execution with explicit UI triggers for Write.
 
 ## Installation
 
@@ -70,10 +70,10 @@ Connect to the simulated robot at `192.168.56.1` (default Docker host IP) and en
    - Enable "Auto listen" for periodic updates without a Timer
    - **NEW**: Right-click → "Cancel" to stop operations
 
-3. **Send commands** with the `UR Command` component
-   - Use context menu: MoveJ, MoveL, StopJ, StopL, or SetDO
-   - Configure speed, acceleration, and other parameters
-   - **NEW**: Right-click → "Cancel" to abort commands mid-execution
+3. **Send commands** with the `UR Write` component
+   - Use the dropdown to select MoveJ, MoveL, Stop, or SetDO
+   - For MoveJ and MoveL, click `Run` to send the current target
+   - Optional: right-click → `Auto Send` to send only when a new motion target arrives
 
 **⚠️ Important**: Always test with URSim first before connecting to real hardware!
 
@@ -131,45 +131,42 @@ Reads robot state data from the robot using **event-driven timer polling** for s
 - Multiple instances run independently
 - Clean start/stop behavior
 
-### UR Command (Simplified ✨)
-Sends commands to the robot using **direct execution** with optional async fire-and-forget.
+### UR Write ✨
+Sends commands to the robot using **direct execution** with an explicit `Run` button for motion.
 
 **Context Menu Options:**
 - **MoveJ** - Joint space movement
   - `q[6]` - Joint angles in radians (required)
   - `speed` - Speed factor (default: `1.05`)
   - `accel` - Acceleration factor (default: `1.4`)
-  - `async` - Run asynchronously (fire-and-forget, default: `false`)
+  - `Run` button - Sends the current joint target once
+  - `Auto Send` menu item - Sends only when the target input changes, off by default and not persisted
 
 - **MoveL** - Linear movement
   - `pose[6]` - TCP pose `[x,y,z,rx,ry,rz]` in m, rad (optional)
   - `target` - Plane target (alternative to pose)
   - `speed` - Speed in m/s (default: `0.25`)
   - `accel` - Acceleration in m/s² (default: `1.2`)
-  - `async` - Run asynchronously (fire-and-forget, default: `false`)
+  - `Run` button - Sends the current target once
+  - `Auto Send` menu item - Sends only when the target input changes, off by default and not persisted
 
-- **StopJ/StopL** - Stop movement
+- **Stop** - Stop current movement
   - `decel` - Deceleration factor (default: `2.0`, required)
 
 - **SetDO** - Set digital output
   - `pin` - Pin number (required)
   - `value` - Boolean value (required)
 
-**Execution Modes:**
-- **Synchronous (default)**: Blocks until command completes, provides immediate feedback
-- **Asynchronous (async=true)**: Sends command and returns immediately (fire-and-forget)
-
 **How It Works:**
-- Synchronous: Direct method call, waits for completion, returns result
-- Asynchronous: Fires `Task.Run` for non-blocking execution
-- Simple pattern inspired by MQTT Publish component
-- No complex async framework overhead
+- MoveJ and MoveL only send when you click the component `Run` button
+- `Auto Send` can be enabled from the context menu to send on new target input only
+- `Auto Send` is intentionally not saved with the component state
+- Stop and SetDO execute directly when solved
 
 **Performance:**
 - Minimal overhead for command execution
-- Clean separation of sync vs async behavior
 - Concurrent execution prevention
-- Immediate feedback for sync operations
+- Immediate feedback through `OK`, `Message`, `Running`, and `Done`
 
 ### UR Robotiq Gripper
 Controls Robotiq grippers (Robotiq URCap required) using the UR.RTDE 1.2 drivers.
@@ -197,20 +194,19 @@ Controls Robotiq grippers (Robotiq URCap required) using the UR.RTDE 1.2 drivers
 - **Logging/recording**: 100-200ms
 - Cancel auto-listen when not needed to reduce network traffic
 
-### For Commands (UR Command)
+### For Commands (UR Write)
 - Check the "OK" output to verify command success
 - Read the "Message" output for error details
-- Use cancellation for emergency stops
+- Use the red `Stop` action to halt motion
 
 ## Troubleshooting
 
 ### Component Not Responding
-- Try canceling the current operation (right-click → Cancel)
 - Check if the session is still connected
 - Verify network connectivity to the robot
 
 ### Data Seems Delayed
-- This is normal for async operations
+- Auto Send waits for a new target change before sending again
 - Check your auto-listen interval setting
 - Network latency may affect timing
 

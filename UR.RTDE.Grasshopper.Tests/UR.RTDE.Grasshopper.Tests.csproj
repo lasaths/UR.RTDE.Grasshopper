@@ -5,13 +5,14 @@
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
     <AutoGenerateBindingRedirects>false</AutoGenerateBindingRedirects>
     <DisableImplicitFrameworkReferences>false</DisableImplicitFrameworkReferences>
+    <URRTDEVersion>1.2.0</URRTDEVersion>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="NUnit3TestAdapter" Version="4.6.0" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
     <PackageReference Include="Rhino.Testing" Version="9.0.0-beta" />
-    <PackageReference Include="UR.RTDE" Version="1.2.0" />
+    <PackageReference Include="UR.RTDE" Version="$(URRTDEVersion)" />
   </ItemGroup>
   
   <ItemGroup>
@@ -30,4 +31,12 @@
     <Reference Include="System.Data" />
     <Reference Include="System.Xml" />
   </ItemGroup>
+
+  <Target Name="CopyURRTDENativeDependencies" AfterTargets="Build">
+    <ItemGroup>
+      <URRTDENativeFiles Include="$(NuGetPackageRoot)ur.rtde\$(URRTDEVersion)\runtimes\win-x64\native\*.dll" />
+    </ItemGroup>
+
+    <Copy SourceFiles="@(URRTDENativeFiles)" DestinationFolder="$(OutputPath)" Condition="Exists('%(URRTDENativeFiles.Identity)')" SkipUnchangedFiles="true" />
+  </Target>
 </Project>

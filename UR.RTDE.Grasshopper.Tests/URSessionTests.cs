@@ -1,6 +1,8 @@
 using NUnit.Framework;
 using UR.RTDE.Grasshopper;
 using System;
+using System.Diagnostics;
+using System.Threading;
 
 namespace UR.RTDE.Grasshopper.Tests
 {
@@ -31,13 +33,15 @@ namespace UR.RTDE.Grasshopper.Tests
         }
 
         [Test]
-        public void TestConnectWithoutRobot()
+        public void TestConnectSetsConnectionStateConsistently()
         {
             bool connected = _session.Connect();
-            
-            Assert.That(connected, Is.False, "Connection should fail without a robot running");
-            Assert.That(_session.IsConnected, Is.False);
-            Assert.That(_session.LastError, Is.Not.Null.And.Not.Empty);
+
+            Assert.That(_session.IsConnected, Is.EqualTo(connected));
+            if (connected)
+                Assert.That(_session.LastError, Is.Null.Or.Empty);
+            else
+                Assert.That(_session.LastError, Is.Not.Null.And.Not.Empty);
         }
 
         [Test]
@@ -132,6 +136,61 @@ namespace UR.RTDE.Grasshopper.Tests
         public void TestIsProgramRunningWithoutConnection()
         {
             Assert.Throws<InvalidOperationException>(() => _session.IsProgramRunning());
+        }
+
+        [Test]
+        public void TestMoveJSameTargetReturnsPromptlyWhenConnected()
+        {
+            RequireConnectedSession();
+
+            var currentQ = _session.GetActualQ();
+            var stopwatch = Stopwatch.StartNew();
+
+            bool ok = _session.MoveJ(currentQ, 0.25, 0.5, false);
+
+            stopwatch.Stop();
+
+            Assert.That(ok, Is.True, _session.LastError);
+            Assert.That(stopwatch.Elapsed, Is.LessThan(TimeSpan.FromSeconds(1.5)),
+                $"Synchronous MoveJ to the current joint target took too long: {stopwatch.Elapsed}.");
+        }
+
+        [Test]
+        public void TestStopJCanInterruptAsyncMoveWhenConnected()
+        {
+            RequireConnectedSession();
+
+            var start = _session.GetActualQ();
+            var target = (double[])start.Clone();
+            target[0] += 0.2;
+
+            try
+            {
+                bool moveStarted = _session.MoveJ(target, 0.2, 0.5, true);
+                Assert.That(moveStarted, Is.True, _session.LastError);
+
+                Thread.Sleep(100);
+
+                bool stopSent = _session.StopJ(2.0);
+                Assert.That(stopSent, Is.True, _session.LastError);
+            }
+            finally
+            {
+                try
+                {
+                    _session.MoveJ(start, 0.2, 0.5, false);
+                }
+                catch
+                {
+                    // Leave cleanup best-effort for simulator-backed tests.
+                }
+            }
+        }
+
+        private void RequireConnectedSession()
+        {
+            if (!_session.Connect())
+                Assert.Ignore($"URSim not available at {TestIp}: {_session.LastError}");
         }
     }
 }

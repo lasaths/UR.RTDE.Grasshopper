@@ -2,9 +2,11 @@
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.Linq;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using Grasshopper.Kernel;
+using Grasshopper.Kernel.Data;
 using Grasshopper.Kernel.Parameters;
 using Grasshopper.GUI;
 using Grasshopper.GUI.Canvas;
@@ -29,10 +31,15 @@ namespace UR.RTDE.Grasshopper
         private int _totalCount = 0;
         private int _lastRunId = 0;
         private bool _donePulsePending = false;
-        private bool _previousExecute = false;
         private bool _lastOk = true;
         private string _lastMessage = "Idle";
         private bool _refreshQueued = false;
+        private bool _runRequested = false;
+        private bool _autoSend = false;
+        private bool _autoSendInitialized = false;
+        private string _lastMotionSignature = string.Empty;
+        private GH_RuntimeMessageLevel? _stickyRuntimeLevel;
+        private string _stickyRuntimeMessage;
 
         internal static readonly string[] ActionModes = { "MoveJ", "MoveL", "Stop", "SetDO" };
 
@@ -140,16 +147,47 @@ namespace UR.RTDE.Grasshopper
             }
         }
 
+        private bool ShouldStartMotion(string signature)
+        {
+            lock (_stateLock)
+            {
+                if (_runRequested)
+                {
+                    _runRequested = false;
+                    _autoSendInitialized = true;
+                    _lastMotionSignature = signature;
+                    return true;
+                }
+
+                if (!_autoSend)
+                    return false;
+
+                if (!_autoSendInitialized)
+                {
+                    _autoSendInitialized = true;
+                    _lastMotionSignature = signature;
+                    return false;
+                }
+
+                if (string.Equals(_lastMotionSignature, signature, StringComparison.Ordinal))
+                    return false;
+
+                _lastMotionSignature = signature;
+                return true;
+            }
+        }
+
+        private bool ShouldShowAutoSendIdleMessage()
+        {
+            lock (_stateLock)
+                return _autoSend && _autoSendInitialized;
+        }
+
         private void HandleMoveJ(IGH_DataAccess da, bool hasSession, URSession session)
         {
-            bool execute = false;
-            da.GetData(4, ref execute);
-            bool risingEdge = execute && !_previousExecute;
-            _previousExecute = execute;
-
             bool running;
             lock (_stateLock) running = _isRunning;
-            if (running || !risingEdge)
+            if (running)
             {
                 WriteStateOutputs(da);
                 return;
@@ -157,7 +195,7 @@ namespace UR.RTDE.Grasshopper
 
             if (!hasSession || session == null || !session.IsConnected)
             {
-                SetFailedState("Session not connected");
+                SetFailedState("Session not connected. Use the Session component's Connect button first.");
                 WriteStateOutputs(da);
                 return;
             }
@@ -166,7 +204,7 @@ namespace UR.RTDE.Grasshopper
             var jointsData = jointsParam.VolatileData;
             if (jointsData.PathCount == 0 || jointsData.DataCount == 0)
             {
-                SetFailedState("No joint data provided");
+                SetFailedState("No joint data provided. Supply 6 joint angles in radians or one branch per waypoint.");
                 WriteStateOutputs(da);
                 return;
             }
@@ -188,7 +226,7 @@ namespace UR.RTDE.Grasshopper
                         else if (branch[j] is double d) joints[j] = d;
                         else
                         {
-                            SetFailedState($"Branch {i}: Invalid joint value at index {j}");
+                            SetFailedState($"Branch {i}: Invalid joint value at index {j}. Input shape: {DescribeInputShape(jointsData)}");
                             WriteStateOutputs(da);
                             return;
                         }
@@ -197,7 +235,7 @@ namespace UR.RTDE.Grasshopper
                 }
                 else if (branch.Count > 0)
                 {
-                    SetFailedState($"Branch {i}: Expected 6 joint values, got {branch.Count}");
+                    SetFailedState($"Branch {i}: Expected 6 joint values, got {branch.Count}. Input shape: {DescribeInputShape(jointsData)}");
                     WriteStateOutputs(da);
                     return;
                 }
@@ -205,7 +243,28 @@ namespace UR.RTDE.Grasshopper
 
             if (waypoints.Count == 0)
             {
-                SetFailedState("Each branch must contain exactly 6 joint angles");
+                SetFailedState($"Each branch must contain exactly 6 joint angles. Input shape: {DescribeInputShape(jointsData)}");
+                WriteStateOutputs(da);
+                return;
+            }
+
+            var signature = BuildMoveSignature("MoveJ", speed, accel, waypoints);
+            if (!ShouldStartMotion(signature))
+            {
+                if (!HasStickyRuntimeMessage())
+                {
+                    if (_autoSend)
+                    {
+                        if (ShouldShowAutoSendIdleMessage())
+                            SetInfoState("Auto Send armed. Waiting for new input.");
+                        else
+                            SetInfoState("Auto Send will send the next new target.");
+                    }
+                    else
+                    {
+                        SetInfoState("Press Run to send the current joint target.");
+                    }
+                }
                 WriteStateOutputs(da);
                 return;
             }
@@ -223,7 +282,7 @@ namespace UR.RTDE.Grasshopper
                 runId = _lastRunId;
                 _donePulsePending = false;
                 _lastOk = true;
-                _lastMessage = "Executing 0/" + _totalCount;
+                _lastMessage = $"Executing 0/{_totalCount}. First target: {FormatVector(snapshot[0])}";
             }
 
             AddLog(_lastMessage);
@@ -235,14 +294,9 @@ namespace UR.RTDE.Grasshopper
 
         private void HandleMoveL(IGH_DataAccess da, bool hasSession, URSession session)
         {
-            bool execute = false;
-            da.GetData(5, ref execute);
-            bool risingEdge = execute && !_previousExecute;
-            _previousExecute = execute;
-
             bool running;
             lock (_stateLock) running = _isRunning;
-            if (running || !risingEdge)
+            if (running)
             {
                 WriteStateOutputs(da);
                 return;
@@ -250,7 +304,7 @@ namespace UR.RTDE.Grasshopper
 
             if (!hasSession || session == null || !session.IsConnected)
             {
-                SetFailedState("Session not connected");
+                SetFailedState("Session not connected. Use the Session component's Connect button first.");
                 WriteStateOutputs(da);
                 return;
             }
@@ -293,7 +347,7 @@ namespace UR.RTDE.Grasshopper
                             }
                             else
                             {
-                                SetFailedState($"Branch {i}: Invalid pose value at index {j}");
+                                SetFailedState($"Branch {i}: Invalid pose value at index {j}. Input shape: {DescribeInputShape(poseData)}");
                                 WriteStateOutputs(da);
                                 return;
                             }
@@ -302,7 +356,7 @@ namespace UR.RTDE.Grasshopper
                     }
                     else if (branch.Count > 0)
                     {
-                        SetFailedState($"Branch {i}: Expected 6 pose values, got {branch.Count}");
+                        SetFailedState($"Branch {i}: Expected 6 pose values, got {branch.Count}. Input shape: {DescribeInputShape(poseData)}");
                         WriteStateOutputs(da);
                         return;
                     }
@@ -312,6 +366,27 @@ namespace UR.RTDE.Grasshopper
             if (poses.Count == 0)
             {
                 SetFailedState("Provide target Plane(s) or pose list(s) [x,y,z,rx,ry,rz]");
+                WriteStateOutputs(da);
+                return;
+            }
+
+            var signature = BuildMoveSignature("MoveL", speed, accel, poses);
+            if (!ShouldStartMotion(signature))
+            {
+                if (!HasStickyRuntimeMessage())
+                {
+                    if (_autoSend)
+                    {
+                        if (ShouldShowAutoSendIdleMessage())
+                            SetInfoState("Auto Send armed. Waiting for new input.");
+                        else
+                            SetInfoState("Auto Send will send the next new target.");
+                    }
+                    else
+                    {
+                        SetInfoState("Press Run to send the current target.");
+                    }
+                }
                 WriteStateOutputs(da);
                 return;
             }
@@ -329,7 +404,7 @@ namespace UR.RTDE.Grasshopper
                 runId = _lastRunId;
                 _donePulsePending = false;
                 _lastOk = true;
-                _lastMessage = "Executing 0/" + _totalCount;
+                _lastMessage = $"Executing 0/{_totalCount}. First target: {FormatVector(snapshot[0])}";
             }
 
             AddLog(_lastMessage);
@@ -359,7 +434,7 @@ namespace UR.RTDE.Grasshopper
                 if (!ok)
                 {
                     var error = session.LastError ?? "Unknown error";
-                    FinishRun(runId, false, $"Failed at {i + 1}/{waypoints.Count}: {error}", false);
+                    FinishRun(runId, false, $"MoveJ failed at {i + 1}/{waypoints.Count}: {error}. Target: {FormatVector(waypoints[i])}", false);
                     return;
                 }
             }
@@ -387,7 +462,7 @@ namespace UR.RTDE.Grasshopper
                 if (!ok)
                 {
                     var error = session.LastError ?? "Unknown error";
-                    FinishRun(runId, false, $"Failed at {i + 1}/{poses.Count}: {error}", false);
+                    FinishRun(runId, false, $"MoveL failed at {i + 1}/{poses.Count}: {error}. Target: {FormatVector(poses[i])}", false);
                     return;
                 }
             }
@@ -422,6 +497,8 @@ namespace UR.RTDE.Grasshopper
             }
 
             AddLog(message);
+            if (ok) ClearStickyRuntimeMessage();
+            else RememberStickyRuntimeMessage(GH_RuntimeMessageLevel.Error, message);
             RequestRefresh();
         }
 
@@ -438,6 +515,8 @@ namespace UR.RTDE.Grasshopper
             }
 
             AddLog(message);
+            if (ok) ClearStickyRuntimeMessage();
+            else RememberStickyRuntimeMessage(GH_RuntimeMessageLevel.Error, message);
         }
 
         private void SetStoppedState(string message, bool ok)
@@ -454,6 +533,8 @@ namespace UR.RTDE.Grasshopper
             }
 
             AddLog(message);
+            if (ok) ClearStickyRuntimeMessage();
+            else RememberStickyRuntimeMessage(GH_RuntimeMessageLevel.Error, message);
         }
 
         private void SetFailedState(string message)
@@ -470,6 +551,17 @@ namespace UR.RTDE.Grasshopper
             }
 
             AddLog("Error: " + message);
+            RememberStickyRuntimeMessage(GH_RuntimeMessageLevel.Error, message);
+        }
+
+        private void SetInfoState(string message)
+        {
+            lock (_stateLock)
+            {
+                _lastMessage = message;
+            }
+
+            ClearStickyRuntimeMessage();
         }
 
         private static bool TryExtractDouble(object value, out double numeric)
@@ -497,6 +589,73 @@ namespace UR.RTDE.Grasshopper
                 _log.Clear();
                 _log.Add($"{DateTime.Now:HH:mm:ss} - {message}");
             }
+        }
+
+        private bool HasStickyRuntimeMessage()
+        {
+            lock (_stateLock)
+                return _stickyRuntimeLevel.HasValue && !string.IsNullOrWhiteSpace(_stickyRuntimeMessage);
+        }
+
+        private void ClearStickyRuntimeMessage()
+        {
+            lock (_stateLock)
+            {
+                _stickyRuntimeLevel = null;
+                _stickyRuntimeMessage = null;
+            }
+        }
+
+        private void RememberStickyRuntimeMessage(GH_RuntimeMessageLevel level, string message)
+        {
+            if (string.IsNullOrWhiteSpace(message))
+                return;
+
+            lock (_stateLock)
+            {
+                _stickyRuntimeLevel = level;
+                _stickyRuntimeMessage = message;
+            }
+
+            RhinoApp.WriteLine($"[UR Write] {level}: {message}");
+        }
+
+        private void EmitStickyRuntimeMessageIfAny()
+        {
+            GH_RuntimeMessageLevel? level;
+            string message;
+
+            lock (_stateLock)
+            {
+                level = _stickyRuntimeLevel;
+                message = _stickyRuntimeMessage;
+            }
+
+            if (level.HasValue && !string.IsNullOrWhiteSpace(message))
+                AddRuntimeMessage(level.Value, message);
+        }
+
+        private static string DescribeInputShape(IGH_Structure data)
+        {
+            if (data == null) return "no data";
+
+            var branches = new List<string>();
+            for (int i = 0; i < data.PathCount; i++)
+                branches.Add(data.get_Branch(i).Count.ToString());
+
+            return $"paths={data.PathCount}, items={data.DataCount}, branchSizes=[{string.Join(", ", branches)}]";
+        }
+
+        private static string FormatVector(IReadOnlyList<double> values)
+        {
+            if (values == null || values.Count == 0) return "[]";
+            return "[" + string.Join(", ", values.Select(v => v.ToString("0.###"))) + "]";
+        }
+
+        private static string BuildMoveSignature(string action, double speed, double accel, IEnumerable<double[]> targets)
+        {
+            var targetText = string.Join(";", targets.Select(FormatVector));
+            return $"{action}|{speed:0.########}|{accel:0.########}|{targetText}";
         }
 
         private void RequestRefresh()
@@ -553,6 +712,7 @@ namespace UR.RTDE.Grasshopper
             da.SetData(3, current);
             da.SetData(4, total);
             da.SetData(5, done);
+            EmitStickyRuntimeMessageIfAny();
 
             if (done) RequestRefresh();
         }
@@ -561,9 +721,37 @@ namespace UR.RTDE.Grasshopper
         {
             if (index >= 0 && index < ActionModes.Length)
             {
-                _action = (URActionKind)index;
-                _previousExecute = false;
+                var nextAction = (URActionKind)index;
+                if (_action != nextAction)
+                    _autoSend = false;
+
+                _action = nextAction;
+                ResetMotionTriggerState();
                 RebuildInputsForAction();
+            }
+        }
+
+        internal void ToggleAutoSend()
+        {
+            if (_action != URActionKind.MoveJ && _action != URActionKind.MoveL)
+                return;
+
+            _autoSend = !_autoSend;
+            ResetMotionTriggerState();
+            if (_autoSend)
+                SetInfoState("Auto Send armed. Waiting for new input.");
+            else
+                SetInfoState("Auto Send off. Use Run to send the current target.");
+            ExpireSolution(true);
+        }
+
+        private void ResetMotionTriggerState()
+        {
+            lock (_stateLock)
+            {
+                _runRequested = false;
+                _autoSendInitialized = false;
+                _lastMotionSignature = string.Empty;
             }
         }
 
@@ -588,6 +776,13 @@ namespace UR.RTDE.Grasshopper
         {
             base.AddedToDocument(document);
             RebuildInputsForAction();
+        }
+
+        protected override void AppendAdditionalComponentMenuItems(ToolStripDropDown menu)
+        {
+            base.AppendAdditionalComponentMenuItems(menu);
+            if (_action == URActionKind.MoveJ || _action == URActionKind.MoveL)
+                Menu_AppendItem(menu, "Auto Send", (s, e) => ToggleAutoSend(), true, _autoSend);
         }
 
         internal void RebuildInputsForAction()
@@ -627,7 +822,6 @@ namespace UR.RTDE.Grasshopper
                     Params.RegisterInputParam(Num("Joints", "Q", "Joint target angles (rad)", GH_ParamAccess.list, null, false));
                     Params.RegisterInputParam(Num("Speed", "V", "Motion speed", GH_ParamAccess.item, 1.05));
                     Params.RegisterInputParam(Num("Acceleration", "A", "Motion acceleration", GH_ParamAccess.item, 1.4));
-                    Params.RegisterInputParam(Bool("Execute", "E", "Start sequence on rising edge (false->true)", false, false));
                     break;
 
                 case URActionKind.MoveL:
@@ -637,7 +831,6 @@ namespace UR.RTDE.Grasshopper
                     Params.RegisterInputParam(new Param_Plane { Name = "Target", NickName = "T", Description = "Target Plane (alternative to Pose)", Optional = true });
                     Params.RegisterInputParam(Num("Speed", "V", "Motion speed", GH_ParamAccess.item, 0.25));
                     Params.RegisterInputParam(Num("Acceleration", "A", "Motion acceleration", GH_ParamAccess.item, 1.2));
-                    Params.RegisterInputParam(Bool("Execute", "E", "Start sequence on rising edge (false->true)", false, false));
                     break;
 
                 case URActionKind.Stop:
@@ -651,6 +844,20 @@ namespace UR.RTDE.Grasshopper
             }
 
             Params.OnParametersChanged();
+            ExpireSolution(true);
+        }
+
+        internal void TriggerRunFromButton()
+        {
+            if (_action != URActionKind.MoveJ && _action != URActionKind.MoveL)
+                return;
+
+            lock (_stateLock)
+            {
+                if (_isRunning) return;
+                _runRequested = true;
+            }
+
             ExpireSolution(true);
         }
 
@@ -708,6 +915,8 @@ namespace UR.RTDE.Grasshopper
         public override bool Read(GH_IO.Serialization.GH_IReader reader)
         {
             if (reader.ItemExists("action")) _action = (URActionKind)reader.GetInt32("action");
+            _autoSend = false;
+            ResetMotionTriggerState();
             return base.Read(reader);
         }
 
@@ -717,10 +926,13 @@ namespace UR.RTDE.Grasshopper
     {
         private RectangleF _dropdownBounds;
         private RectangleF _dropdownButtonBounds;
+        private RectangleF _runButtonBounds;
         private RectangleF _stopButtonBounds;
         private List<RectangleF> _dropdownItemBounds;
         private bool _dropdownOpen = false;
         private bool _dropdownHover = false;
+        private bool _runMouseDown;
+        private bool _runMouseOver;
         private bool _stopMouseDown;
         private bool _stopMouseOver;
         private int _hoverItemIndex = -1;
@@ -741,9 +953,10 @@ namespace UR.RTDE.Grasshopper
             var buttonSpacing = 6f / scale;
 
             var body = Bounds;
-            // Only show stop button when in Stop action mode
+            bool showRunButton = CommandComponent._action == URActionKind.MoveJ || CommandComponent._action == URActionKind.MoveL;
             bool showStopButton = CommandComponent._action == URActionKind.Stop;
-            var reservedHeight = (showStopButton ? buttonHeight + buttonSpacing : 0) + buttonHeight + (4f * s);
+            bool showActionButton = showRunButton || showStopButton;
+            var reservedHeight = (showActionButton ? buttonHeight + buttonSpacing : 0) + buttonHeight + (4f * s);
             Bounds = new RectangleF(body.X, body.Y, body.Width, body.Height + reservedHeight);
             body = Bounds;
 
@@ -753,14 +966,21 @@ namespace UR.RTDE.Grasshopper
 
             float currentY = bandTop + (2f * s);
 
-            // Stop button first (only in Stop mode, above dropdown)
-            if (showStopButton)
+            if (showRunButton)
             {
+                _runButtonBounds = new RectangleF(elementX, currentY, elementWidth, buttonHeight);
+                _stopButtonBounds = RectangleF.Empty;
+                currentY += buttonHeight + buttonSpacing;
+            }
+            else if (showStopButton)
+            {
+                _runButtonBounds = RectangleF.Empty;
                 _stopButtonBounds = new RectangleF(elementX, currentY, elementWidth, buttonHeight);
                 currentY += buttonHeight + buttonSpacing;
             }
             else
             {
+                _runButtonBounds = RectangleF.Empty;
                 _stopButtonBounds = RectangleF.Empty;
             }
 
@@ -795,7 +1015,27 @@ namespace UR.RTDE.Grasshopper
             graphics.SmoothingMode = SmoothingMode.AntiAlias;
             var scale = GH_GraphicsUtil.UiScale <= 0 ? 1f : GH_GraphicsUtil.UiScale;
 
-            // Draw STOP button first (only in Stop mode, above dropdown)
+            if ((CommandComponent._action == URActionKind.MoveJ || CommandComponent._action == URActionKind.MoveL) && !_runButtonBounds.IsEmpty)
+            {
+                var runBg = Color.FromArgb(16, 185, 129);
+                if (_runMouseDown) runBg = Darken(runBg, 0.2);
+                else if (_runMouseOver) runBg = Color.FromArgb(
+                    Math.Min(255, runBg.R + 20),
+                    Math.Min(255, runBg.G + 20),
+                    Math.Min(255, runBg.B + 20));
+
+                var cornerRadius = (int)Math.Max(2, Math.Round(8f / scale));
+                using (var path = RoundedRect(_runButtonBounds, cornerRadius))
+                {
+                    graphics.FillPath(new SolidBrush(runBg), path);
+                    graphics.DrawPath(new Pen(Darken(runBg, 0.4), 1.2f), path);
+                }
+
+                var buttonFont = new Font(GH_FontServer.Standard.FontFamily, GH_FontServer.Standard.Size / scale, FontStyle.Bold);
+                graphics.DrawString("RUN", buttonFont, Brushes.White, _runButtonBounds, GH_TextRenderingConstants.CenterCenter);
+                buttonFont.Dispose();
+            }
+
             if (CommandComponent._action == URActionKind.Stop && !_stopButtonBounds.IsEmpty)
             {
                 var stopBg = Color.FromArgb(239, 68, 68);
@@ -904,6 +1144,13 @@ namespace UR.RTDE.Grasshopper
 
             if (e.Button == MouseButtons.Left)
             {
+                if (!_runButtonBounds.IsEmpty && _runButtonBounds.Contains(e.CanvasLocation))
+                {
+                    _runMouseDown = true;
+                    Owner.OnDisplayExpired(false);
+                    return GH_ObjectResponse.Capture;
+                }
+
                 // Stop button only works in Stop mode
                 if (CommandComponent._action == URActionKind.Stop && !_stopButtonBounds.IsEmpty && _stopButtonBounds.Contains(e.CanvasLocation))
                 {
@@ -921,6 +1168,20 @@ namespace UR.RTDE.Grasshopper
 
             if (e.Button == MouseButtons.Left)
             {
+                if (_runMouseDown && !_runButtonBounds.IsEmpty && _runButtonBounds.Contains(e.CanvasLocation))
+                {
+                    _runMouseDown = false;
+                    _runMouseOver = false;
+                    global::Grasshopper.Instances.CursorServer.ResetCursor(sender);
+
+                    if (CommandComponent != null)
+                        CommandComponent.TriggerRunFromButton();
+
+                    Owner.OnDisplayExpired(false);
+                    return GH_ObjectResponse.Release;
+                }
+                _runMouseDown = false;
+
                 // Stop button (only in Stop mode)
                 if (_stopMouseDown && !_stopButtonBounds.IsEmpty && _stopButtonBounds.Contains(e.CanvasLocation))
                 {
@@ -974,10 +1235,12 @@ namespace UR.RTDE.Grasshopper
             if (Owner.Locked || Owner.Hidden) return base.RespondToMouseMove(sender, e);
 
             bool wasDropdownHover = _dropdownHover;
+            bool wasRunOver = _runMouseOver;
             bool wasStopOver = _stopMouseOver;
             int wasHoverIndex = _hoverItemIndex;
 
             _dropdownHover = _dropdownBounds.Contains(e.CanvasLocation);
+            _runMouseOver = !_runButtonBounds.IsEmpty && _runButtonBounds.Contains(e.CanvasLocation);
             // Stop button hover only works in Stop mode
             _stopMouseOver = CommandComponent._action == URActionKind.Stop && !_stopButtonBounds.IsEmpty && _stopButtonBounds.Contains(e.CanvasLocation);
             _hoverItemIndex = -1;
@@ -994,12 +1257,12 @@ namespace UR.RTDE.Grasshopper
                 }
             }
 
-            if (_dropdownHover != wasDropdownHover || _stopMouseOver != wasStopOver || _hoverItemIndex != wasHoverIndex)
+            if (_dropdownHover != wasDropdownHover || _runMouseOver != wasRunOver || _stopMouseOver != wasStopOver || _hoverItemIndex != wasHoverIndex)
             {
                 Owner.OnDisplayExpired(false);
             }
 
-            if (_dropdownHover || _stopMouseOver || _hoverItemIndex >= 0)
+            if (_dropdownHover || _runMouseOver || _stopMouseOver || _hoverItemIndex >= 0)
             {
                 sender.Cursor = Cursors.Hand;
                 return GH_ObjectResponse.Capture;

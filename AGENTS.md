@@ -5,7 +5,7 @@ This document provides information for AI agents and automated systems working w
 ## Project Overview
 
 **Name**: UR.RTDE.Grasshopper  
-**Version**: 1.3.0  
+**Version**: 1.3.1  
 **Type**: Grasshopper plugin for Rhino  
 **Purpose**: Control Universal Robots via RTDE (Real-Time Data Exchange) protocol from Grasshopper, including Robotiq grippers (URCap)  
 **Language**: C# (.NET)  
@@ -19,7 +19,7 @@ UR.RTDE.Grasshopper/
 │   ├── UR_SessionComponent.cs       # Session management component
 │   ├── UR_SessionAttributes.cs      # Custom UI attributes for session component
 │   ├── UR_ReadComponent.cs          # Read robot state component (ASYNC)
-│   ├── UR_CommandComponent.cs       # Send commands component (ASYNC)
+│   ├── UR_WriteComponent.cs         # Send commands component
 │   └── UR_GripperComponent.cs       # Robotiq gripper control component
 ├── Types/               # Custom Grasshopper types
 │   ├── URSessionGoo.cs              # Grasshopper data type wrapper for URSession
@@ -92,27 +92,30 @@ Tests:
 - Timer thread: Polls RTDE in background, caches results
 - Pattern similar to MQTT Subscribe: event-driven with cached data
 
-### 4. UR_CommandComponent (Simplified)
+### 4. UR_WriteComponent
 **Purpose**: Sends commands to robot  
-**Location**: `Components/UR_CommandComponent.cs`  
+**Location**: `Components/UR_WriteComponent.cs`  
 **Architecture**: `GH_Component` with direct command execution  
 **Key Features**:
 - **Simple execution**: Direct method calls, no worker pattern
-- **Async option**: Fire-and-forget with `Task.Run` for async moves
-- **Synchronous by default**: Blocking calls for immediate feedback
-- Context menu to select command type (MoveJ, MoveL, StopJ, StopL, SetDO)
+- Motion uses an on-component **Run** button instead of an `Execute` input
+- Context menu can arm **Auto Send** for MoveJ/MoveL so new targets send automatically
+- `Auto Send` is intentionally **not persisted** in component serialization for safety
+- Dropdown/button UI selects command type (MoveJ, MoveL, Stop, SetDO)
 - Dynamic input/output based on selected action
 - Concurrency check to prevent overlapping commands
 
 **Key Fields**:
-- `_action`: `URActionKind` enum (MoveJ, MoveL, StopJ, StopL, SetDO)
-- `_isExecuting`: Flag to prevent concurrent execution
+- `_action`: `URActionKind` enum (MoveJ, MoveL, Stop, SetDO)
+- `_isRunning`: Flag to prevent overlapping motion runs
+- `_runRequested`: One-shot run request from the component button
+- `_autoSend`: Non-persisted auto-send flag for motion targets
 - `_log`: Command history log
 
 **Pattern**:
-- User triggers component → SolveInstance → Execute command → Return result
-- For async moves: Fire `Task.Run`, return immediately
-- For sync moves: Block until complete, return result
+- User clicks `Run` for MoveJ/MoveL, or enables `Auto Send` and changes the target input
+- Stop and SetDO execute directly during solve
+- Move sequences run in the background and update `Running`, `CurrentIndex`, `Total`, and `Done`
 
 ### 5. UR_GripperComponent
 **Purpose**: Control Robotiq grippers via URCap (native, RTDE bridge, or URScript backends)  
@@ -411,8 +414,8 @@ if (session == null || !session.IsConnected)
 ## Version Management
 
 ### Current Version
-- **Version**: 1.3.0 (in `.csproj`)
-- **Tag**: `v1.3.0` (in git)
+- **Version**: 1.3.1 (in `.csproj`)
+- **Tag**: `v1.3.1` (in git)
 - **Yak Package**: Available on `yak.rhino3d.com`
 
 ### Version Bump Process
