@@ -94,23 +94,30 @@
     <PackageReference Include="System.Drawing.Common" Version="8.0.0" ExcludeAssets="runtime" />
   </ItemGroup>
 
-  <!-- Copy icon to output directory for yak packaging -->
+  <!-- Copy icon to net48 output for yak packaging -->
   <Target Name="CopyYakIcon" BeforeTargets="BuildYakPackage" Condition="$(BuildYakPackage) == 'True'">
     <PropertyGroup>
       <IconSource>$(MSBuildThisFileDirectory)Resources\Icons\robot-duotone.png</IconSource>
-      <IconDestination>$(OutputPath)robot-duotone.png</IconDestination>
+      <YakNet48Dir>$(MSBuildThisFileDirectory)bin\$(Configuration)\net48</YakNet48Dir>
+      <IconDestination>$(YakNet48Dir)\robot-duotone.png</IconDestination>
     </PropertyGroup>
+    <MakeDir Directories="$(YakNet48Dir)" Condition="!Exists('$(YakNet48Dir)')" />
     <Copy SourceFiles="$(IconSource)" DestinationFiles="$(IconDestination)" Condition="Exists('$(IconSource)')" SkipUnchangedFiles="true" />
   </Target>
 
-  <Target Name="BuildYakPackage" AfterTargets="DispatchToInnerBuilds">
+  <Target Name="EnsureYakTool" BeforeTargets="BuildYakPackage" Condition="$(BuildYakPackage) == 'True' and '$(YakExecutable)' == '' and $([MSBuild]::IsOSPlatform(macos)) and !Exists('$(MSBuildThisFileDirectory)tools/yak')">
+    <Exec Command="bash &quot;$(MSBuildThisFileDirectory)tools/install-yak.sh&quot;" WorkingDirectory="$(MSBuildThisFileDirectory)" />
+  </Target>
+
+  <Target Name="BuildYakPackage" AfterTargets="DispatchToInnerBuilds" DependsOnTargets="EnsureYakTool">
     <PropertyGroup>
       <YakExecutable Condition="$(YakExecutable) == '' and $([MSBuild]::IsOSPlatform(windows)) and Exists('C:\Program Files\Rhino 8\System\Yak.exe')">C:\Program Files\Rhino 8\System\Yak.exe</YakExecutable>
-      <YakExecutable Condition="$(YakExecutable) == '' and $([MSBuild]::IsOSPlatform(macos)) and Exists('/Applications/Rhino 8.app/Contents/Resources/bin/yak')">/Applications/Rhino 8.app/Contents/Resources/bin/yak</YakExecutable>
-      <YakOutputPath>$(OutputPath)..\net48</YakOutputPath>
+      <YakExecutable Condition="$(YakExecutable) == '' and $([MSBuild]::IsOSPlatform(macos)) and '$(YakMacPath)' != '' and Exists('$(YakMacPath)')">$(YakMacPath)</YakExecutable>
+      <YakExecutable Condition="$(YakExecutable) == '' and Exists('$(MSBuildThisFileDirectory)tools/yak')">$(MSBuildThisFileDirectory)tools/yak</YakExecutable>
+      <YakOutputPath>$(MSBuildThisFileDirectory)bin/$(Configuration)/net48</YakOutputPath>
     </PropertyGroup>
     
-    <Warning Text="Could not find Yak executable" Condition="$(YakExecutable) == ''" />
+    <Warning Text="Could not find Yak executable. On macOS without Rhino, run: bash tools/install-yak.sh" Condition="$(YakExecutable) == ''" />
 
     <ItemGroup>
       <YakPackagesToDelete Include="$(YakOutputPath)\*.yak;$(YakOutputPath)\**\manifest.yml" />

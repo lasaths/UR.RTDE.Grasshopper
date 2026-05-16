@@ -132,3 +132,7 @@ $RECYCLE.BIN/
 
 _NCrunch*
 /.vs
+
+# Standalone yak CLI (downloaded by tools/install-yak.sh)
+tools/yak-cli/
+tools/yak

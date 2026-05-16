@@ -8,7 +8,7 @@
       "preLaunchTask": "build",
       "program": "",
       "osx": {
-        "program": "/Applications/Rhino 8.app/Contents/MacOS/Rhinoceros",
+        "program": "/Volumes/Storage/00_Applications/Rhino 8.app/Contents/MacOS/Rhinoceros",
         "args": [
           "-runscript=_Grasshopper"
         ]
