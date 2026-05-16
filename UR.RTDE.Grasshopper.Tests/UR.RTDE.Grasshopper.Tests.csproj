@@ -5,7 +5,7 @@
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
     <AutoGenerateBindingRedirects>false</AutoGenerateBindingRedirects>
     <DisableImplicitFrameworkReferences>false</DisableImplicitFrameworkReferences>
-    <URRTDEVersion>1.2.0</URRTDEVersion>
+    <URRTDEVersion>1.6.3</URRTDEVersion>
   </PropertyGroup>
 
   <ItemGroup>

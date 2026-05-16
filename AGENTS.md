@@ -151,7 +151,7 @@ Tests:
 ## Dependencies
 
 ### NuGet Packages
-- **UR.RTDE** (Version 1.2.0): Main dependency for RTDE communication and Robotiq gripper support
+- **UR.RTDE** (Version 1.6.3): Main dependency for RTDE communication and Robotiq gripper support
   - Provides native C++ P/Invoke wrapper
   - Includes native DLLs (rtde.dll, ur_rtde_c_api.dll, boost_thread)
   - Robotiq drivers: `RobotiqGripperNative`, `RobotiqGripperRtde`, `RobotiqGripper` (URScript)

@@ -1,11 +1,11 @@
 # UR.RTDE.Grasshopper
 
 [![Yak Package](https://img.shields.io/badge/yak-UR--RTDE--Grasshopper-blue)](https://yak.rhino3d.com/packages/UR-RTDE-Grasshopper)
-[![Version](https://img.shields.io/badge/version-1.3.2-blue)](https://yak.rhino3d.com/packages/UR-RTDE-Grasshopper)
+[![Version](https://img.shields.io/badge/version-1.3.3-blue)](https://yak.rhino3d.com/packages/UR-RTDE-Grasshopper)
 [![Rhino](https://img.shields.io/badge/Rhino-7%20%26%208-green)](https://www.rhino3d.com/)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-Grasshopper components to control Universal Robots via UR.RTDE (C# wrapper). Supports session management, reads (joints/pose/IO/modes), basic commands, and Robotiq gripper control (URCap) via UR.RTDE 1.2. Tested on Rhino 7 (net48) and Rhino 8 (net8.0/net8.0-windows).
+Grasshopper components to control Universal Robots via UR.RTDE (C# wrapper). Supports session management, reads (joints/pose/IO/modes), basic commands, and Robotiq gripper control (URCap) via UR.RTDE 1.6.3. Tested on Rhino 7 (net48) and Rhino 8 (net8.0/net8.0-windows).
 
 ## ✨ New in 1.3.0: Rhino 7 & Rhino 8 Yak Packages
 
@@ -169,7 +169,7 @@ Sends commands to the robot using **direct execution** with an explicit `Run` bu
 - Immediate feedback through `OK`, `Message`, `Running`, and `Done`
 
 ### UR Robotiq Gripper
-Controls Robotiq grippers (Robotiq URCap required) using the UR.RTDE 1.2 drivers.
+Controls Robotiq grippers (Robotiq URCap required) using the UR.RTDE 1.6.3 drivers.
 
 **Backends (menu):**
 - **Native** (port `63352`) - direct Robotiq driver with status codes

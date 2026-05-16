@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.3.3] - 2026-05-16
+
+### Changed
+- Upgraded **UR.RTDE** NuGet dependency from `1.2.0` to `1.6.3` (latest on nuget.org).
+- Bumped plugin version to `1.3.3`.
+
+### Compatibility
+- No breaking API or component GUID changes.
+
 ## [1.3.2] - 2026-03-21
 
 ### Added
