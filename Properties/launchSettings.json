@@ -1,5 +1,14 @@
 {
   "profiles": {
+    "Rhino 8 Mac - Debug": {
+      "commandName": "Executable",
+      "executablePath": "/Volumes/Storage/00_Applications/Rhino 8.app/Contents/MacOS/Rhinoceros",
+      "commandLineArgs": "-runscript=_Grasshopper",
+      "workingDirectory": "$(ProjectDir)",
+      "environmentVariables": {
+        "RHINO_PACKAGE_DIRS": "$(ProjectDir)/bin/Debug/net8.0"
+      }
+    },
     "Rhino 8 - netcore": {
       "commandName": "Executable",
       "executablePath": "C:\\Program Files\\Rhino 8\\System\\Rhino.exe",

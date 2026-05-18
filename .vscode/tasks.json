@@ -8,6 +8,7 @@
       "args": [
         "build",
         "-clp:NoSummary",
+        "/p:BuildYakPackage=false",
         "${workspaceFolder}/UR.RTDE.Grasshopper.csproj"
       ],
       "problemMatcher": "$msCompile",
@@ -16,6 +17,57 @@
         "clear": true
       },
       "group": "build"
+    },
+    {
+      "label": "build-debug-mac",
+      "command": "dotnet",
+      "type": "shell",
+      "args": [
+        "build",
+        "-c",
+        "Debug",
+        "-f",
+        "net8.0",
+        "-clp:NoSummary",
+        "/p:BuildYakPackage=false",
+        "${workspaceFolder}/UR.RTDE.Grasshopper.csproj"
+      ],
+      "problemMatcher": "$msCompile",
+      "presentation": {
+        "reveal": "always",
+        "clear": true
+      },
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      }
+    },
+    {
+      "label": "stash-grasshopper-libraries",
+      "type": "shell",
+      "command": "LIB=\"$HOME/Library/Application Support/McNeel/Rhinoceros/8.0/Plug-ins/Grasshopper (b45a29b1-4343-4035-989e-044e8580d9cf)/Libraries/UR.RTDE.Grasshopper\"; DISABLED=\"${LIB}.disabled-by-debug\"; if [ -d \"$LIB\" ] && [ ! -d \"$DISABLED\" ]; then mv \"$LIB\" \"$DISABLED\" && echo \"Stashed Libraries copy -> $(basename \"$DISABLED\")\"; elif [ -d \"$DISABLED\" ]; then echo \"Libraries copy already stashed\"; else echo \"No Libraries copy to stash\"; fi",
+      "presentation": {
+        "reveal": "silent",
+        "close": true
+      }
+    },
+    {
+      "label": "restore-grasshopper-libraries",
+      "type": "shell",
+      "command": "LIB=\"$HOME/Library/Application Support/McNeel/Rhinoceros/8.0/Plug-ins/Grasshopper (b45a29b1-4343-4035-989e-044e8580d9cf)/Libraries/UR.RTDE.Grasshopper\"; DISABLED=\"${LIB}.disabled-by-debug\"; if [ -d \"$DISABLED\" ]; then rm -rf \"$LIB\" 2>/dev/null; mv \"$DISABLED\" \"$LIB\" && echo \"Restored Libraries copy\"; else echo \"Nothing to restore\"; fi",
+      "presentation": {
+        "reveal": "silent",
+        "close": true
+      }
+    },
+    {
+      "label": "debug-mac",
+      "dependsOn": [
+        "stash-grasshopper-libraries",
+        "build-debug-mac"
+      ],
+      "dependsOrder": "sequence",
+      "problemMatcher": []
     }
   ]
 }

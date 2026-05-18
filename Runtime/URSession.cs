@@ -1,6 +1,9 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Net.Sockets;
 using System.Reflection;
+using System.Text;
 using System.Threading;
 using UR.RTDE;
 
@@ -13,10 +16,20 @@ namespace UR.RTDE.Grasshopper
         UrScript
     }
 
+    public enum URAnalogOutputMode
+    {
+        Voltage,
+        Current
+    }
+
     public sealed class URSession : IDisposable
     {
         private const int DefaultRobotiqNativePort = 63352;
         private const int DefaultRobotiqScriptPort = 30002;
+        private const ushort ControlFlagsUploadScript = 1;
+        private const ushort ControlFlagsDisableRemoteControlCheck = 1 << 7;
+        private const int RtdeControlPort = 30003;
+        private const int ExternalControlPort = 50002;
         private static int _resolverRegistered;
 
         private readonly object _lockObj = new object();
@@ -24,19 +37,30 @@ namespace UR.RTDE.Grasshopper
         private UR.RTDE.RTDEReceive _receive;
         private RTDEIO _io;
         private volatile bool _isConnected;
+        private int _streamSendSuppressCount;
 
         public string Ip { get; }
+        public bool IsStreamSendSuppressed => Volatile.Read(ref _streamSendSuppressCount) > 0;
         public bool IsConnected => _isConnected;
         public string LastError { get; private set; }
 
         static URSession()
         {
+            NativeBootstrap.EnsureLoaded();
             RegisterAssemblyResolver();
         }
 
         public URSession(string ip)
         {
             Ip = ip ?? string.Empty;
+        }
+
+        public void PushStreamSendSuppress() => Interlocked.Increment(ref _streamSendSuppressCount);
+
+        public void PopStreamSendSuppress()
+        {
+            if (Interlocked.Decrement(ref _streamSendSuppressCount) < 0)
+                Interlocked.Exchange(ref _streamSendSuppressCount, 0);
         }
 
         public bool Connect(int timeoutMs = 2000)
@@ -46,8 +70,8 @@ namespace UR.RTDE.Grasshopper
                 try
                 {
                     DisposeClientsInternal();
-                    _control = new UR.RTDE.RTDEControl(Ip);
                     _receive = new UR.RTDE.RTDEReceive(Ip);
+                    _control = CreateControlWithFallback();
                     _isConnected = true;
                     LastError = null;
                     return true;
@@ -62,16 +86,107 @@ namespace UR.RTDE.Grasshopper
             }
         }
 
+        private RTDEControl CreateControlWithFallback()
+        {
+            var attempts = new List<(string Label, ushort Flags)>
+            {
+                ("default (upload external-control script)", ControlFlagsUploadScript),
+                ("disable remote-control check", ControlFlagsDisableRemoteControlCheck),
+                ("no flags", 0),
+                ("upload script + disable remote-control check", (ushort)(ControlFlagsUploadScript | ControlFlagsDisableRemoteControlCheck)),
+            };
+
+            Exception? lastEx = null;
+            foreach (var (label, flags) in attempts)
+            {
+                try
+                {
+                    return new UR.RTDE.RTDEControl(Ip, flags: flags);
+                }
+                catch (Exception ex)
+                {
+                    lastEx = ex;
+                }
+            }
+
+            throw new InvalidOperationException(BuildControlConnectionErrorMessage(attempts, lastEx), lastEx);
+        }
+
+        private string BuildControlConnectionErrorMessage(
+            IReadOnlyList<(string Label, ushort Flags)> attempts,
+            Exception? lastEx)
+        {
+            var sb = new StringBuilder();
+            sb.Append("RTDEControl could not connect to ").Append(Ip).Append('.');
+            if (lastEx != null)
+                sb.Append(' ').Append(lastEx.Message);
+
+            sb.Append(" Tried: ");
+            for (var i = 0; i < attempts.Count; i++)
+            {
+                if (i > 0) sb.Append("; ");
+                sb.Append(attempts[i].Label);
+            }
+            sb.Append('.');
+
+            var portHint = DescribeControlPortReachability(Ip);
+            if (!string.IsNullOrWhiteSpace(portHint))
+                sb.Append(' ').Append(portHint);
+
+            return sb.ToString();
+        }
+
+        private static string DescribeControlPortReachability(string host)
+        {
+            bool rtdeControlOpen = IsTcpPortOpen(host, RtdeControlPort, 400);
+            bool externalControlOpen = IsTcpPortOpen(host, ExternalControlPort, 400);
+
+            if (rtdeControlOpen && externalControlOpen)
+                return "Ports 30003 and 50002 are reachable; on URSim, start External Control and use Remote Control if required.";
+
+            if (!rtdeControlOpen)
+            {
+                return "Port 30003 (RTDE control) is not reachable from this machine. "
+                       + "URSim Docker must publish it, e.g. `-p 30001:30001 -p 30003:30003 -p 30004:30004` "
+                       + "(receive-only on 30004 is not enough for MoveJ and other control commands).";
+            }
+
+            return "Port 30003 is open but 50002 (external control URCap) is not; control may still work with the "
+                   + "\"disable remote-control check\" flag on URSim in Local Control.";
+        }
+
+        private static bool IsTcpPortOpen(string host, int port, int timeoutMs)
+        {
+            try
+            {
+                using var client = new TcpClient();
+                var connect = client.ConnectAsync(host, port);
+                if (!connect.Wait(Math.Max(1, timeoutMs)))
+                    return false;
+                return client.Connected;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
         public double[] GetActualQ()
         {
-            if (_receive == null) throw new InvalidOperationException("Not connected");
-            return _receive.GetActualQ();
+            lock (_lockObj)
+            {
+                RequireReceive();
+                return _receive.GetActualQ();
+            }
         }
 
         public double[] GetActualTCPPose()
         {
-            if (_receive == null) throw new InvalidOperationException("Not connected");
-            return InvokeReceive<double[]>(new[] { "GetActualTCPPose", "GetActualTcpPose", "GetActualToolPose" });
+            lock (_lockObj)
+            {
+                RequireReceive();
+                return InvokeReceive<double[]>(new[] { "GetActualTCPPose", "GetActualTcpPose", "GetActualToolPose" });
+            }
         }
 
         public bool MoveJ(double[] q, double speed, double acceleration, bool asynchronous)
@@ -81,6 +196,7 @@ namespace UR.RTDE.Grasshopper
             lock (_lockObj)
             {
                 if (_control == null) throw new InvalidOperationException("Not connected");
+                EndStreamingMotionBeforePathMove();
                 return InvokeControlBool("MoveJ", new object[] { q, speed, acceleration, asynchronous });
             }
         }
@@ -110,6 +226,7 @@ namespace UR.RTDE.Grasshopper
             lock (_lockObj)
             {
                 if (_control == null) throw new InvalidOperationException("Not connected");
+                EndStreamingMotionBeforePathMove();
                 return InvokeControlBool("MoveL", new object[] { pose, speed, acceleration, asynchronous });
             }
         }
@@ -119,16 +236,7 @@ namespace UR.RTDE.Grasshopper
             lock (_lockObj)
             {
                 if (_control == null) throw new InvalidOperationException("Not connected");
-                if (_io == null)
-                {
-                    try { _io = new RTDEIO(Ip, false); }
-                    catch (Exception ex)
-                    {
-                        LastError = ex.InnerException?.Message ?? ex.Message;
-                        return false;
-                    }
-                }
-
+                if (!EnsureIo()) return false;
                 try
                 {
                     _io.SetStandardDigitalOut(pin, value);
@@ -145,56 +253,359 @@ namespace UR.RTDE.Grasshopper
 
         public int GetDigitalInState()
         {
-            if (_receive == null) throw new InvalidOperationException("Not connected");
-            return InvokeReceive<int>(new[] { "GetDigitalInState", "GetActualDigitalInputBits" });
+            lock (_lockObj)
+            {
+                RequireReceive();
+                try
+                {
+                    return InvokeReceive<int>(new[] { "GetDigitalInState", "GetActualDigitalInputBits" });
+                }
+                catch (MissingMethodException)
+                {
+                    return BuildDigitalBits("GetStandardDigitalIn");
+                }
+            }
         }
 
         public int GetDigitalOutState()
         {
-            if (_receive == null) throw new InvalidOperationException("Not connected");
-            return InvokeReceive<int>(new[] { "GetDigitalOutState", "GetActualDigitalOutputBits" });
+            lock (_lockObj)
+            {
+                RequireReceive();
+                try
+                {
+                    return InvokeReceive<int>(new[] { "GetDigitalOutState", "GetActualDigitalOutputBits" });
+                }
+                catch (MissingMethodException)
+                {
+                    return BuildDigitalBits("GetStandardDigitalOut");
+                }
+            }
         }
 
         public double GetStandardAnalogInput0()
         {
-            if (_receive == null) throw new InvalidOperationException("Not connected");
-            return InvokeReceive<double>(new[] { "GetStandardAnalogInput0", "GetActualStandardAnalogInput0" });
+            lock (_lockObj)
+            {
+                RequireReceive();
+                try
+                {
+                    return InvokeReceive<double>(new[] { "GetStandardAnalogInput0", "GetActualStandardAnalogInput0" });
+                }
+                catch (MissingMethodException)
+                {
+                    return InvokeReceiveIndexedDouble("GetStandardAnalogInput", 0);
+                }
+            }
         }
 
         public double GetStandardAnalogInput1()
         {
-            if (_receive == null) throw new InvalidOperationException("Not connected");
-            return InvokeReceive<double>(new[] { "GetStandardAnalogInput1", "GetActualStandardAnalogInput1" });
+            lock (_lockObj)
+            {
+                RequireReceive();
+                try
+                {
+                    return InvokeReceive<double>(new[] { "GetStandardAnalogInput1", "GetActualStandardAnalogInput1" });
+                }
+                catch (MissingMethodException)
+                {
+                    return InvokeReceiveIndexedDouble("GetStandardAnalogInput", 1);
+                }
+            }
         }
 
         public double GetStandardAnalogOutput0()
         {
-            if (_receive == null) throw new InvalidOperationException("Not connected");
-            return InvokeReceive<double>(new[] { "GetStandardAnalogOutput0", "GetActualStandardAnalogOutput0" });
+            lock (_lockObj)
+            {
+                RequireReceive();
+                try
+                {
+                    return InvokeReceive<double>(new[] { "GetStandardAnalogOutput0", "GetActualStandardAnalogOutput0" });
+                }
+                catch (MissingMethodException)
+                {
+                    return InvokeReceiveIndexedDouble("GetStandardAnalogOutput", 0);
+                }
+            }
         }
 
         public double GetStandardAnalogOutput1()
         {
-            if (_receive == null) throw new InvalidOperationException("Not connected");
-            return InvokeReceive<double>(new[] { "GetStandardAnalogOutput1", "GetActualStandardAnalogOutput1" });
+            lock (_lockObj)
+            {
+                RequireReceive();
+                try
+                {
+                    return InvokeReceive<double>(new[] { "GetStandardAnalogOutput1", "GetActualStandardAnalogOutput1" });
+                }
+                catch (MissingMethodException)
+                {
+                    return InvokeReceiveIndexedDouble("GetStandardAnalogOutput", 1);
+                }
+            }
         }
 
         public int GetRobotMode()
         {
-            if (_receive == null) throw new InvalidOperationException("Not connected");
-            return InvokeReceive<int>(new[] { "GetRobotMode" });
+            lock (_lockObj)
+            {
+                RequireReceive();
+                return InvokeReceive<int>(new[] { "GetRobotMode" });
+            }
         }
 
         public int GetSafetyMode()
         {
-            if (_receive == null) throw new InvalidOperationException("Not connected");
-            return InvokeReceive<int>(new[] { "GetSafetyMode" });
+            lock (_lockObj)
+            {
+                RequireReceive();
+                return InvokeReceive<int>(new[] { "GetSafetyMode" });
+            }
         }
 
         public bool IsProgramRunning()
         {
-            if (_receive == null) throw new InvalidOperationException("Not connected");
-            return InvokeReceive<bool>(new[] { "IsProgramRunning" });
+            lock (_lockObj)
+            {
+                RequireReceive();
+                try
+                {
+                    return InvokeReceive<bool>(new[] { "IsProgramRunning", "GetProgramRunning" });
+                }
+                catch (MissingMethodException)
+                {
+                    return InvokeReceive<int>(new[] { "GetRuntimeState" }) != 0;
+                }
+            }
+        }
+
+        public double[] GetTargetQ()
+        {
+            lock (_lockObj)
+            {
+                RequireReceive();
+                return _receive.GetTargetQ();
+            }
+        }
+
+        public double[] GetTargetTcpPose()
+        {
+            lock (_lockObj)
+            {
+                RequireReceive();
+                return _receive.GetTargetTcpPose();
+            }
+        }
+
+        public double[] GetActualQd()
+        {
+            lock (_lockObj)
+            {
+                RequireReceive();
+                return _receive.GetActualQd();
+            }
+        }
+
+        public double[] GetActualTcpSpeed()
+        {
+            lock (_lockObj)
+            {
+                RequireReceive();
+                return _receive.GetActualTcpSpeed();
+            }
+        }
+
+        public double[] GetActualTcpForce()
+        {
+            lock (_lockObj)
+            {
+                RequireReceive();
+                return _receive.GetActualTcpForce();
+            }
+        }
+
+        public uint GetRobotStatus()
+        {
+            lock (_lockObj)
+            {
+                RequireReceive();
+                return _receive.GetRobotStatus();
+            }
+        }
+
+        public int GetRuntimeState()
+        {
+            lock (_lockObj)
+            {
+                RequireReceive();
+                return _receive.GetRuntimeState();
+            }
+        }
+
+        public bool IsSteady()
+        {
+            lock (_lockObj)
+            {
+                if (_control == null) throw new InvalidOperationException("Not connected");
+                return _control.IsSteady;
+            }
+        }
+
+        public bool WaitForMotionComplete(int timeoutMs = 30000)
+        {
+            lock (_lockObj)
+            {
+                if (_control == null) throw new InvalidOperationException("Not connected");
+            }
+
+            var deadline = DateTime.UtcNow.AddMilliseconds(Math.Max(1, timeoutMs));
+            while (DateTime.UtcNow < deadline)
+            {
+                lock (_lockObj)
+                {
+                    if (_control == null) throw new InvalidOperationException("Not connected");
+                    if (_control.IsSteady) return true;
+                    if (_control.WaitForNextState()) return true;
+                }
+                Thread.Sleep(10);
+            }
+
+            LastError = $"Motion did not complete within {timeoutMs} ms";
+            return false;
+        }
+
+        public bool SpeedJ(double[] qd, double acceleration, double time)
+        {
+            if (qd == null || qd.Length != 6) throw new ArgumentException("qd must be length 6", nameof(qd));
+            lock (_lockObj)
+            {
+                if (_control == null) throw new InvalidOperationException("Not connected");
+                return InvokeControlVoid("SpeedJ", new object[] { qd, acceleration, time });
+            }
+        }
+
+        public bool ServoJ(double[] q, double speed, double acceleration, double time, double lookaheadTime, double gain)
+        {
+            if (q == null || q.Length != 6) throw new ArgumentException("q must be length 6", nameof(q));
+            lock (_lockObj)
+            {
+                if (_control == null) throw new InvalidOperationException("Not connected");
+                return InvokeControlVoid("ServoJ", new object[] { q, speed, acceleration, time, lookaheadTime, gain });
+            }
+        }
+
+        public bool SpeedStop(double acceleration = 10.0)
+        {
+            lock (_lockObj)
+            {
+                if (_control == null) throw new InvalidOperationException("Not connected");
+                return InvokeControlVoid("SpeedStop", new object[] { acceleration });
+            }
+        }
+
+        public bool ServoStop(double acceleration = 0.5)
+        {
+            lock (_lockObj)
+            {
+                if (_control == null) throw new InvalidOperationException("Not connected");
+                return InvokeControlVoid("ServoStop", new object[] { acceleration });
+            }
+        }
+
+        public bool SetAnalogOutput(int index, double value, URAnalogOutputMode mode)
+        {
+            lock (_lockObj)
+            {
+                if (_control == null) throw new InvalidOperationException("Not connected");
+                if (!EnsureIo()) return false;
+                try
+                {
+                    if (mode == URAnalogOutputMode.Current)
+                        _io.SetAnalogOutputCurrent(index, value);
+                    else
+                        _io.SetAnalogOutputVoltage(index, value);
+                    LastError = null;
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    LastError = ex.InnerException?.Message ?? ex.Message;
+                    return false;
+                }
+            }
+        }
+
+        public bool SetToolDigitalOut(int pin, bool value)
+        {
+            lock (_lockObj)
+            {
+                if (_control == null) throw new InvalidOperationException("Not connected");
+                if (!EnsureIo()) return false;
+                try
+                {
+                    _io.SetToolDigitalOut(pin, value);
+                    LastError = null;
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    LastError = ex.InnerException?.Message ?? ex.Message;
+                    return false;
+                }
+            }
+        }
+
+        public bool SetTcp(double[] tcpPose)
+        {
+            if (tcpPose == null || tcpPose.Length != 6) throw new ArgumentException("tcpPose must be length 6", nameof(tcpPose));
+            lock (_lockObj)
+            {
+                if (_control == null) throw new InvalidOperationException("Not connected");
+                return InvokeControlVoid("SetTcp", new object[] { tcpPose });
+            }
+        }
+
+        public bool SetPayload(double mass, double[] centerOfGravity)
+        {
+            if (centerOfGravity == null || centerOfGravity.Length != 3)
+                throw new ArgumentException("centerOfGravity must be length 3", nameof(centerOfGravity));
+            lock (_lockObj)
+            {
+                if (_control == null) throw new InvalidOperationException("Not connected");
+                return InvokeControlVoid("SetPayload", new object[] { mass, centerOfGravity });
+            }
+        }
+
+        public double[] ForwardKinematics(double[] q)
+        {
+            if (q == null || q.Length != 6) throw new ArgumentException("q must be length 6", nameof(q));
+            lock (_lockObj)
+            {
+                if (_control == null) throw new InvalidOperationException("Not connected");
+                return _control.GetForwardKinematics(q);
+            }
+        }
+
+        public bool HasInverseKinematicsSolution(double[] pose)
+        {
+            if (pose == null || pose.Length != 6) throw new ArgumentException("pose must be length 6", nameof(pose));
+            lock (_lockObj)
+            {
+                if (_control == null) throw new InvalidOperationException("Not connected");
+                return _control.HasInverseKinematicsSolution(pose);
+            }
+        }
+
+        public double[] InverseKinematics(double[] pose)
+        {
+            if (pose == null || pose.Length != 6) throw new ArgumentException("pose must be length 6", nameof(pose));
+            lock (_lockObj)
+            {
+                if (_control == null) throw new InvalidOperationException("Not connected");
+                return _control.GetInverseKinematics(pose);
+            }
         }
 
         public bool RobotiqActivate(RobotiqBackend backend, bool autoCalibrate, int timeoutMs, bool installBridge, bool verbose, int port, out string message)
@@ -391,14 +802,25 @@ namespace UR.RTDE.Grasshopper
 
         private void DisposeClientsInternal()
         {
-            // Must be called within lock
-            try { _receive?.Dispose(); } catch { }
-            try { _control?.Dispose(); } catch { }
-            try { _io?.Dispose(); } catch { }
+            // Must be called within lock. Mark disconnected before tearing down native clients
+            // so timer/read threads fail fast instead of racing into freed RTDE handles.
+            _isConnected = false;
+            var receive = _receive;
+            var control = _control;
+            var io = _io;
             _receive = null;
             _control = null;
             _io = null;
-            _isConnected = false;
+            try { receive?.Dispose(); } catch { }
+            try { control?.Dispose(); } catch { }
+            try { io?.Dispose(); } catch { }
+        }
+
+        private RTDEReceive RequireReceive()
+        {
+            if (!_isConnected || _receive == null)
+                throw new InvalidOperationException("Not connected");
+            return _receive;
         }
 
         private T InvokeReceive<T>(string[] methodNames)
@@ -421,6 +843,162 @@ namespace UR.RTDE.Grasshopper
             throw new MissingMethodException($"None of the methods found on RTDEReceive: {string.Join(", ", methodNames)}", last);
         }
 
+        private bool EnsureIo()
+        {
+            if (_control == null)
+            {
+                LastError = "Not connected";
+                return false;
+            }
+
+            if (_io != null) return true;
+
+            try
+            {
+                _io = new RTDEIO(Ip, false);
+                LastError = null;
+                return true;
+            }
+            catch (Exception ex)
+            {
+                LastError = ex.InnerException?.Message ?? ex.Message;
+                return false;
+            }
+        }
+
+        private int BuildDigitalBits(string methodName)
+        {
+            var mi = _receive.GetType().GetMethod(methodName, new[] { typeof(int) });
+            if (mi == null)
+                throw new MissingMethodException($"Method not found on RTDEReceive: {methodName}(int)");
+
+            int bits = 0;
+            // UR standard digital IO is usually exposed as 8 channels in this API shape.
+            for (int i = 0; i < 8; i++)
+            {
+                var state = mi.Invoke(_receive, new object[] { i });
+                if (state is bool b && b)
+                    bits |= (1 << i);
+            }
+
+            return bits;
+        }
+
+        private double InvokeReceiveIndexedDouble(string methodName, int index)
+        {
+            var mi = _receive.GetType().GetMethod(methodName, new[] { typeof(int) });
+            if (mi == null)
+                throw new MissingMethodException($"Method not found on RTDEReceive: {methodName}(int)");
+
+            var value = mi.Invoke(_receive, new object[] { index });
+            return Convert.ToDouble(value);
+        }
+
+        private static bool IsVagueControlError(string message)
+        {
+            if (string.IsNullOrWhiteSpace(message))
+                return true;
+            if (!message.StartsWith("Command failed", StringComparison.OrdinalIgnoreCase))
+                return false;
+            var detail = message.Length > "Command failed:".Length
+                ? message.Substring("Command failed:".Length).Trim()
+                : string.Empty;
+            return detail.Length == 0 || detail.Equals("Unknown error", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private string DescribeRobotStateForControlFailure()
+        {
+            if (!_isConnected || _receive == null)
+                return "session not connected";
+
+            try
+            {
+                var parts = new List<string>();
+                var robotMode = GetRobotMode();
+                parts.Add($"robot mode {robotMode} ({DescribeRobotMode(robotMode)})");
+                var safety = GetSafetyMode();
+                parts.Add($"safety {safety} ({DescribeSafetyMode(safety)})");
+                if (IsProgramRunning())
+                    parts.Add("PolyScope program is playing — stop it before RTDE MoveJ/MoveL");
+                if (safety != 1)
+                    parts.Add("clear protective/safeguard stop on the teach pendant");
+                if (robotMode is 3 or 4)
+                    parts.Add("power on the robot and release brakes");
+                if (robotMode is 0 or 2)
+                    parts.Add("wait until the robot finishes booting");
+                parts.Add("enable Remote Control on the pendant, or run External Control URCap (port 50002) on URSim");
+                parts.Add("turn UR Stream off (Stop) — ServoJ blocks MoveJ until streaming ends");
+                return string.Join("; ", parts);
+            }
+            catch (Exception ex)
+            {
+                return "could not read robot state: " + ex.Message;
+            }
+        }
+
+        private static string DescribeRobotMode(int mode) => mode switch
+        {
+            0 => "Disconnected",
+            1 => "ConfirmSafety",
+            2 => "Booting",
+            3 => "PowerOff",
+            4 => "PowerOn",
+            5 => "Idle",
+            6 => "Backdrive",
+            7 => "Running",
+            8 => "UpdatingFirmware",
+            _ => "Unknown"
+        };
+
+        private static string DescribeSafetyMode(int mode) => mode switch
+        {
+            1 => "Normal",
+            2 => "Reduced",
+            3 => "ProtectiveStop",
+            4 => "Recovery",
+            5 => "SafeguardStop",
+            6 => "SystemEmergencyStop",
+            7 => "RobotEmergencyStop",
+            8 => "Violation",
+            9 => "Fault",
+            10 => "AutomaticModeSafeguardStop",
+            11 => "ThreePositionEnablingStop",
+            _ => "Unknown"
+        };
+
+        private string FormatControlException(string methodName, Exception ex)
+        {
+            var msg = ex.InnerException?.Message ?? ex.Message;
+            if (!IsVagueControlError(msg))
+                return msg;
+            return $"{methodName} rejected by RTDE control (robot returned no detail). {DescribeRobotStateForControlFailure()}";
+        }
+
+        /// <summary>
+        /// ServoJ/SpeedJ keep the RTDE script in streaming mode; path moves are rejected until stopped.
+        /// </summary>
+        private void EndStreamingMotionBeforePathMove()
+        {
+            if (_control == null) return;
+            var previousError = LastError;
+            TryInvokeControlVoid("ServoStop", new object[] { 0.5 });
+            TryInvokeControlVoid("SpeedStop", new object[] { 10.0 });
+            LastError = previousError;
+        }
+
+        private void TryInvokeControlVoid(string methodName, object[] args)
+        {
+            try
+            {
+                var mi = _control.GetType().GetMethod(methodName);
+                mi?.Invoke(_control, args);
+            }
+            catch
+            {
+                // Streaming may not be active.
+            }
+        }
+
         private bool InvokeControlBool(string methodName, object[] args)
         {
             try
@@ -439,7 +1017,28 @@ namespace UR.RTDE.Grasshopper
             }
             catch (Exception ex)
             {
-                LastError = ex.InnerException?.Message ?? ex.Message;
+                LastError = FormatControlException(methodName, ex);
+                return false;
+            }
+        }
+
+        private bool InvokeControlVoid(string methodName, object[] args)
+        {
+            try
+            {
+                var mi = _control.GetType().GetMethod(methodName);
+                if (mi == null)
+                {
+                    LastError = $"Method not found: {methodName}";
+                    return false;
+                }
+                mi.Invoke(_control, args);
+                LastError = null;
+                return true;
+            }
+            catch (Exception ex)
+            {
+                LastError = FormatControlException(methodName, ex);
                 return false;
             }
         }

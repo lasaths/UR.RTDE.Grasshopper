@@ -8,9 +8,11 @@ namespace UR.RTDE.Grasshopper
     public class URSessionParam : GH_PersistentParam<URSessionGoo>
     {
         public URSessionParam()
-          : base("UR Session", "URSession", "UR RTDE session handle.", "UR", "RTDE")
+          : base("UR Session", "URSession", "UR RTDE session handle.", "Params", "UR")
         {
         }
+
+        public override GH_Exposure Exposure => GH_Exposure.primary;
 
         protected override System.Drawing.Bitmap Icon
         {

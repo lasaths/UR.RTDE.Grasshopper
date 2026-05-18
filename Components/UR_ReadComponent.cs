@@ -7,13 +7,15 @@ using System.Windows.Forms;
 using Grasshopper.Kernel;
 using Grasshopper.Kernel.Types;
 using Grasshopper.Kernel.Data;
+using Grasshopper.Kernel.Parameters;
 using Grasshopper.Kernel.Attributes;
 using Grasshopper.GUI;
 using Grasshopper.GUI.Canvas;
+using Rhino.Geometry;
 
 namespace UR.RTDE.Grasshopper
 {
-    public enum URReadKind { Joints, Pose, IO, Modes }
+    public enum URReadKind { Joints, Pose, IO, Modes, Targets, Dynamics, Status, FK, IK }
 
     public class UR_ReadComponent : GH_Component
     {
@@ -23,13 +25,18 @@ namespace UR.RTDE.Grasshopper
         
         private URSession _currentSession;
         private System.Threading.Timer _readTimer;
+        private int _timerInFlight;
         private readonly object _lock = new object();
         
         private object _lastReadData;
         private string _lastMessage = "";
         private bool _hasNewData = false;
 
-        internal static readonly string[] ReadModes = { "Joints", "Pose", "IO", "Modes" };
+        internal static readonly string[] ReadModes =
+        {
+            "Joints", "Pose", "IO", "Modes", "Targets", "Dynamics", "Status",
+            "FK (compute)", "IK (compute)"
+        };
 
         public UR_ReadComponent()
           : base("UR Read", "URRead",
@@ -115,8 +122,61 @@ namespace UR.RTDE.Grasshopper
             if (index >= 0 && index < ReadModes.Length)
             {
                 _kind = (URReadKind)index;
-                ExpireSolution(true);
+                RebuildInputsForKind();
             }
+        }
+
+        internal void RebuildInputsForKind()
+        {
+            if (Params == null) return;
+
+            while (Params.Input.Count > 1)
+            {
+                var toRemove = Params.Input[1];
+                Params.UnregisterInputParameter(toRemove, true);
+            }
+
+            switch (_kind)
+            {
+                case URReadKind.FK:
+                    Params.RegisterInputParam(new global::Grasshopper.Kernel.Parameters.Param_Number
+                    {
+                        Name = "Joints",
+                        NickName = "Q",
+                        Description = "Joint angles q[6] (rad) for forward kinematics",
+                        Access = GH_ParamAccess.list,
+                        Optional = false
+                    });
+                    break;
+
+                case URReadKind.IK:
+                    var pose = new global::Grasshopper.Kernel.Parameters.Param_Number
+                    {
+                        Name = "Pose",
+                        NickName = "P",
+                        Description = "TCP pose [x,y,z,rx,ry,rz] (m,rad)",
+                        Access = GH_ParamAccess.list,
+                        Optional = true
+                    };
+                    Params.RegisterInputParam(pose);
+                    Params.RegisterInputParam(new global::Grasshopper.Kernel.Parameters.Param_Plane
+                    {
+                        Name = "Target",
+                        NickName = "T",
+                        Description = "Target TCP Plane (alternative to Pose)",
+                        Optional = true
+                    });
+                    break;
+            }
+
+            Params.OnParametersChanged();
+            ExpireSolution(true);
+        }
+
+        public override void AddedToDocument(GH_Document document)
+        {
+            base.AddedToDocument(document);
+            RebuildInputsForKind();
         }
 
         internal void ToggleAutoListen()
@@ -138,76 +198,258 @@ namespace UR.RTDE.Grasshopper
 
             try
             {
-                object resultData = null;
-                string message = "ok";
-
-                switch (_kind)
+                if (TryBuildReadResult(_currentSession, da, out var resultData, out var message))
+                    OutputData(da, resultData, message);
+                else
                 {
-                    case URReadKind.Joints:
-                        var q = _currentSession.GetActualQ();
-                        var qTree = new GH_Structure<IGH_Goo>();
-                        var qPath = new GH_Path(0);
-                        for (int i = 0; i < 6 && i < q.Length; i++)
-                            qTree.Append(new GH_Number(q[i]), qPath);
-                        resultData = qTree;
-                        break;
-
-                    case URReadKind.Pose:
-                        var p6 = _currentSession.GetActualTCPPose();
-                        var plane = PoseUtils.PoseToPlane(p6);
-                        resultData = plane;
-                        break;
-
-                    case URReadKind.IO:
-                        var din = _currentSession.GetDigitalInState();
-                        var dout = _currentSession.GetDigitalOutState();
-                        var ai0 = _currentSession.GetStandardAnalogInput0();
-                        var ai1 = _currentSession.GetStandardAnalogInput1();
-                        var ao0 = _currentSession.GetStandardAnalogOutput0();
-                        var ao1 = _currentSession.GetStandardAnalogOutput1();
-
-                        var ioTree = new GH_Structure<IGH_Goo>();
-                        var pDin = new GH_Path(0);
-                        var pDout = new GH_Path(1);
-                        var pAnalog = new GH_Path(2);
-                        for (int i = 0; i < 18; i++)
-                        {
-                            bool dinBit = ((din >> i) & 1) == 1;
-                            bool doutBit = ((dout >> i) & 1) == 1;
-                            ioTree.Append(new GH_Boolean(dinBit), pDin);
-                            ioTree.Append(new GH_Boolean(doutBit), pDout);
-                        }
-                        ioTree.Append(new GH_Number(ai0), pAnalog);
-                        ioTree.Append(new GH_Number(ai1), pAnalog);
-                        ioTree.Append(new GH_Number(ao0), pAnalog);
-                        ioTree.Append(new GH_Number(ao1), pAnalog);
-                        resultData = ioTree;
-                        break;
-
-                    case URReadKind.Modes:
-                        var rmode = _currentSession.GetRobotMode();
-                        var smode = _currentSession.GetSafetyMode();
-                        var running = _currentSession.IsProgramRunning();
-
-                        var modeTree = new GH_Structure<IGH_Goo>();
-                        modeTree.Append(new GH_String($"{MapRobotMode(rmode)} ({rmode})"), new GH_Path(0));
-                        modeTree.Append(new GH_String($"{MapSafetyMode(smode)} ({smode})"), new GH_Path(1));
-                        modeTree.Append(new GH_Boolean(running), new GH_Path(2));
-                        resultData = modeTree;
-                        break;
-
-                    default:
-                        message = "Not implemented";
-                        break;
+                    da.SetData(0, null);
+                    da.SetData(1, message);
                 }
-
-                OutputData(da, resultData, message);
             }
             catch (Exception ex)
             {
                 da.SetData(0, null);
                 da.SetData(1, ex.Message);
             }
+        }
+
+        private bool TryBuildReadResult(URSession session, IGH_DataAccess da, out object resultData, out string message)
+        {
+            resultData = null;
+            message = "ok";
+
+            switch (_kind)
+            {
+                case URReadKind.Joints:
+                {
+                    var q = session.GetActualQ();
+                    var qTree = new GH_Structure<IGH_Goo>();
+                    var qPath = new GH_Path(0);
+                    for (int i = 0; i < 6 && i < q.Length; i++)
+                        qTree.Append(new GH_Number(q[i]), qPath);
+                    resultData = qTree;
+                    return true;
+                }
+
+                case URReadKind.Pose:
+                {
+                    var p6 = session.GetActualTCPPose();
+                    resultData = PoseUtils.PoseToPlane(p6);
+                    return true;
+                }
+
+                case URReadKind.IO:
+                {
+                    var din = session.GetDigitalInState();
+                    var dout = session.GetDigitalOutState();
+                    var ai0 = session.GetStandardAnalogInput0();
+                    var ai1 = session.GetStandardAnalogInput1();
+                    var ao0 = session.GetStandardAnalogOutput0();
+                    var ao1 = session.GetStandardAnalogOutput1();
+
+                    var ioTree = new GH_Structure<IGH_Goo>();
+                    var pDin = new GH_Path(0);
+                    var pDout = new GH_Path(1);
+                    var pAnalog = new GH_Path(2);
+                    for (int i = 0; i < 18; i++)
+                    {
+                        ioTree.Append(new GH_Boolean(((din >> i) & 1) == 1), pDin);
+                        ioTree.Append(new GH_Boolean(((dout >> i) & 1) == 1), pDout);
+                    }
+                    ioTree.Append(new GH_Number(ai0), pAnalog);
+                    ioTree.Append(new GH_Number(ai1), pAnalog);
+                    ioTree.Append(new GH_Number(ao0), pAnalog);
+                    ioTree.Append(new GH_Number(ao1), pAnalog);
+                    resultData = ioTree;
+                    return true;
+                }
+
+                case URReadKind.Modes:
+                {
+                    var rmode = session.GetRobotMode();
+                    var smode = session.GetSafetyMode();
+                    var running = session.IsProgramRunning();
+                    var modeTree = new GH_Structure<IGH_Goo>();
+                    modeTree.Append(new GH_String($"{MapRobotMode(rmode)} ({rmode})"), new GH_Path(0));
+                    modeTree.Append(new GH_String($"{MapSafetyMode(smode)} ({smode})"), new GH_Path(1));
+                    modeTree.Append(new GH_Boolean(running), new GH_Path(2));
+                    resultData = modeTree;
+                    return true;
+                }
+
+                case URReadKind.Targets:
+                {
+                    var tq = session.GetTargetQ();
+                    var tp = session.GetTargetTcpPose();
+                    var tree = new GH_Structure<IGH_Goo>();
+                    var qPath = new GH_Path(0);
+                    for (int i = 0; i < 6 && i < tq.Length; i++)
+                        tree.Append(new GH_Number(tq[i]), qPath);
+                    tree.Append(new GH_Plane(PoseUtils.PoseToPlane(tp)), new GH_Path(1));
+                    resultData = tree;
+                    return true;
+                }
+
+                case URReadKind.Dynamics:
+                {
+                    var qd = session.GetActualQd();
+                    var speed = session.GetActualTcpSpeed();
+                    var force = session.GetActualTcpForce();
+                    var tree = new GH_Structure<IGH_Goo>();
+                    var pQd = new GH_Path(0);
+                    for (int i = 0; i < 6 && i < qd.Length; i++)
+                        tree.Append(new GH_Number(qd[i]), pQd);
+                    var pSpeed = new GH_Path(1);
+                    for (int i = 0; i < speed.Length; i++)
+                        tree.Append(new GH_Number(speed[i]), pSpeed);
+                    var pForce = new GH_Path(2);
+                    for (int i = 0; i < force.Length; i++)
+                        tree.Append(new GH_Number(force[i]), pForce);
+                    resultData = tree;
+                    return true;
+                }
+
+                case URReadKind.Status:
+                {
+                    var steady = session.IsSteady();
+                    var robotStatus = session.GetRobotStatus();
+                    var runtime = session.GetRuntimeState();
+                    var tree = new GH_Structure<IGH_Goo>();
+                    tree.Append(new GH_Boolean(steady), new GH_Path(0));
+                    tree.Append(new GH_String($"{MapRobotStatus(robotStatus)} ({robotStatus})"), new GH_Path(1));
+                    tree.Append(new GH_String($"{MapRuntimeState(runtime)} ({runtime})"), new GH_Path(2));
+                    resultData = tree;
+                    return true;
+                }
+
+                case URReadKind.FK:
+                {
+                    if (!TryCollectJointInput(da, out var q, out message))
+                        return false;
+                    var tcp = session.ForwardKinematics(q);
+                    var fkTree = new GH_Structure<IGH_Goo>();
+                    fkTree.Append(new GH_Plane(PoseUtils.PoseToPlane(tcp)), new GH_Path(0));
+                    var rawPath = new GH_Path(1);
+                    for (int i = 0; i < tcp.Length; i++)
+                        fkTree.Append(new GH_Number(tcp[i]), rawPath);
+                    resultData = fkTree;
+                    return true;
+                }
+
+                case URReadKind.IK:
+                {
+                    if (!TryCollectIkPose(da, out var pose, out message))
+                        return false;
+                    var hasSolution = session.HasInverseKinematicsSolution(pose);
+                    var ikTree = new GH_Structure<IGH_Goo>();
+                    ikTree.Append(new GH_Boolean(hasSolution), new GH_Path(1));
+                    if (!hasSolution)
+                    {
+                        message = "No IK solution for target pose";
+                        resultData = ikTree;
+                        return true;
+                    }
+                    var ikQ = session.InverseKinematics(pose);
+                    var qPath = new GH_Path(0);
+                    for (int i = 0; i < 6 && i < ikQ.Length; i++)
+                        ikTree.Append(new GH_Number(ikQ[i]), qPath);
+                    resultData = ikTree;
+                    return true;
+                }
+
+                default:
+                    message = "Not implemented";
+                    return false;
+            }
+        }
+
+        private bool TryCollectJointInput(IGH_DataAccess da, out double[] q, out string error)
+        {
+            q = null;
+            error = null;
+            if (Params.Input.Count > 1 && TryGetDoublesFromParam(Params.Input[1], out var list) && list.Count >= 6)
+            {
+                q = new double[6];
+                for (int i = 0; i < 6; i++) q[i] = list[i];
+                return true;
+            }
+
+            if (Params.Input.Count > 1)
+            {
+                var data = Params.Input[1].VolatileData;
+                if (data.PathCount > 0 && data.get_Branch(0).Count >= 6)
+                {
+                    var branch = data.get_Branch(0);
+                    q = new double[6];
+                    for (int i = 0; i < 6; i++)
+                    {
+                        if (branch[i] is GH_Number gn) q[i] = gn.Value;
+                        else { error = $"Invalid joint at index {i}"; return false; }
+                    }
+                    return true;
+                }
+            }
+
+            error = "Provide q[6] for FK";
+            return false;
+        }
+
+        private bool TryCollectIkPose(IGH_DataAccess da, out double[] pose, out string error)
+        {
+            pose = null;
+            error = null;
+
+            if (Params.Input.Count > 2)
+            {
+                var planeData = Params.Input[2].VolatileData;
+                if (planeData.PathCount > 0 && planeData.DataCount > 0)
+                {
+                    foreach (var item in planeData.AllData(true))
+                    {
+                        if (item is GH_Plane gp && gp.Value.IsValid)
+                        {
+                            pose = PoseUtils.PlaneToPose(gp.Value);
+                            return true;
+                        }
+                    }
+                }
+            }
+
+            if (da != null && Params.Input.Count > 2)
+            {
+                var target = Plane.Unset;
+                if (da.GetData(2, ref target) && target.IsValid)
+                {
+                    pose = PoseUtils.PlaneToPose(target);
+                    return true;
+                }
+            }
+
+            if (Params.Input.Count > 1 && TryGetDoublesFromParam(Params.Input[1], out var list) && list.Count >= 6)
+            {
+                pose = new double[6];
+                for (int i = 0; i < 6; i++) pose[i] = list[i];
+                return true;
+            }
+
+            error = "Provide target Plane or pose [x,y,z,rx,ry,rz] for IK";
+            return false;
+        }
+
+        private static bool TryGetDoublesFromParam(IGH_Param param, out List<double> values)
+        {
+            values = new List<double>();
+            var data = param.VolatileData;
+            if (data.PathCount == 0 || data.DataCount == 0) return false;
+            var branch = data.get_Branch(0);
+            foreach (var item in branch)
+            {
+                if (item is GH_Number gn)
+                    values.Add(gn.Value);
+                else
+                    return false;
+            }
+            return values.Count > 0;
         }
 
         private void OutputData(IGH_DataAccess da, object data, string message)
@@ -227,84 +469,44 @@ namespace UR.RTDE.Grasshopper
 
         private void StopAutoListen()
         {
-            if (_readTimer != null)
-            {
-                _readTimer.Dispose();
-                _readTimer = null;
-            }
+            var timer = Interlocked.Exchange(ref _readTimer, null);
+            if (timer == null)
+                return;
+
+            timer.Change(Timeout.Infinite, Timeout.Infinite);
+            SpinWait.SpinUntil(() => Volatile.Read(ref _timerInFlight) == 0, TimeSpan.FromSeconds(2));
+            timer.Dispose();
         }
 
         private void OnTimerElapsed(object state)
         {
-            if (_currentSession == null || !_currentSession.IsConnected)
+            if (_readTimer == null)
                 return;
 
+            Interlocked.Increment(ref _timerInFlight);
             try
             {
-                object resultData = null;
-                string message = "ok";
+                var session = _currentSession;
+                if (session == null || !session.IsConnected)
+                    return;
 
-                switch (_kind)
+                if (TryBuildReadResult(session, null, out var resultData, out var message))
                 {
-                    case URReadKind.Joints:
-                        var q = _currentSession.GetActualQ();
-                        var qTree = new GH_Structure<IGH_Goo>();
-                        var qPath = new GH_Path(0);
-                        for (int i = 0; i < 6 && i < q.Length; i++)
-                            qTree.Append(new GH_Number(q[i]), qPath);
-                        resultData = qTree;
-                        break;
-
-                    case URReadKind.Pose:
-                        var p6 = _currentSession.GetActualTCPPose();
-                        var plane = PoseUtils.PoseToPlane(p6);
-                        resultData = plane;
-                        break;
-
-                    case URReadKind.IO:
-                        var din = _currentSession.GetDigitalInState();
-                        var dout = _currentSession.GetDigitalOutState();
-                        var ai0 = _currentSession.GetStandardAnalogInput0();
-                        var ai1 = _currentSession.GetStandardAnalogInput1();
-                        var ao0 = _currentSession.GetStandardAnalogOutput0();
-                        var ao1 = _currentSession.GetStandardAnalogOutput1();
-
-                        var ioTree = new GH_Structure<IGH_Goo>();
-                        var pDin = new GH_Path(0);
-                        var pDout = new GH_Path(1);
-                        var pAnalog = new GH_Path(2);
-                        for (int i = 0; i < 18; i++)
-                        {
-                            bool dinBit = ((din >> i) & 1) == 1;
-                            bool doutBit = ((dout >> i) & 1) == 1;
-                            ioTree.Append(new GH_Boolean(dinBit), pDin);
-                            ioTree.Append(new GH_Boolean(doutBit), pDout);
-                        }
-                        ioTree.Append(new GH_Number(ai0), pAnalog);
-                        ioTree.Append(new GH_Number(ai1), pAnalog);
-                        ioTree.Append(new GH_Number(ao0), pAnalog);
-                        ioTree.Append(new GH_Number(ao1), pAnalog);
-                        resultData = ioTree;
-                        break;
-
-                    case URReadKind.Modes:
-                        var rmode = _currentSession.GetRobotMode();
-                        var smode = _currentSession.GetSafetyMode();
-                        var running = _currentSession.IsProgramRunning();
-
-                        var modeTree = new GH_Structure<IGH_Goo>();
-                        modeTree.Append(new GH_String($"{MapRobotMode(rmode)} ({rmode})"), new GH_Path(0));
-                        modeTree.Append(new GH_String($"{MapSafetyMode(smode)} ({smode})"), new GH_Path(1));
-                        modeTree.Append(new GH_Boolean(running), new GH_Path(2));
-                        resultData = modeTree;
-                        break;
+                    lock (_lock)
+                    {
+                        _lastReadData = resultData;
+                        _lastMessage = message;
+                        _hasNewData = true;
+                    }
                 }
-
-                lock (_lock)
+                else
                 {
-                    _lastReadData = resultData;
-                    _lastMessage = message;
-                    _hasNewData = true;
+                    lock (_lock)
+                    {
+                        _lastReadData = null;
+                        _lastMessage = message;
+                        _hasNewData = true;
+                    }
                 }
 
                 var doc = OnPingDocument();
@@ -321,6 +523,10 @@ namespace UR.RTDE.Grasshopper
                     _lastMessage = ex.Message;
                     _hasNewData = true;
                 }
+            }
+            finally
+            {
+                Interlocked.Decrement(ref _timerInFlight);
             }
         }
 
@@ -398,6 +604,22 @@ namespace UR.RTDE.Grasshopper
                 9 => "Fault",
                 10 => "AutomaticModeSafeguardStop",
                 11 => "ThreePositionEnablingStop",
+                _ => "Unknown"
+            };
+        }
+
+        private static string MapRobotStatus(uint status) => $"0x{status:X}";
+
+        private static string MapRuntimeState(int state)
+        {
+            return state switch
+            {
+                0 => "Stopping",
+                1 => "Stopped",
+                2 => "Playing",
+                3 => "Pausing",
+                4 => "Paused",
+                5 => "Resuming",
                 _ => "Unknown"
             };
         }
@@ -501,30 +723,19 @@ namespace UR.RTDE.Grasshopper
 
             // Draw auto-listen button (now first/top)
             bool isAutoListen = ReadComponent._autoListen;
-            var buttonBg = isAutoListen ? Color.FromArgb(16, 185, 129) : Color.FromArgb(160, 160, 160);
-            if (_autoListenMouseDown) buttonBg = Darken(buttonBg, 0.2);
-            else if (_autoListenHover) buttonBg = Color.FromArgb(
-                Math.Min(255, buttonBg.R + 20),
-                Math.Min(255, buttonBg.G + 20),
-                Math.Min(255, buttonBg.B + 20));
-
-            var cornerRadius = (int)Math.Max(2, Math.Round(8f / scale));
-            using (var path = RoundedRect(_autoListenButtonBounds, cornerRadius))
-            {
-                graphics.FillPath(new SolidBrush(buttonBg), path);
-                graphics.DrawPath(new Pen(Darken(buttonBg, 0.4), 1.2f), path);
-            }
+            var buttonBg = GrasshopperUiDraw.ToggleButtonBase(isAutoListen, ComponentUiColors.Active);
+            GrasshopperUiDraw.DrawRoundedButton(graphics, _autoListenButtonBounds, scale, buttonBg, _autoListenMouseDown, _autoListenHover);
 
             var buttonFont = new Font(GH_FontServer.Standard.FontFamily, GH_FontServer.Standard.Size / scale, FontStyle.Bold);
-            var buttonText = isAutoListen ? "Listening" : "Listen";
+            var buttonText = isAutoListen ? ComponentButtonLabels.Listening : ComponentButtonLabels.Listen;
             graphics.DrawString(buttonText, buttonFont, Brushes.White, _autoListenButtonBounds, GH_TextRenderingConstants.CenterCenter);
             buttonFont.Dispose();
 
             // Draw dropdown (now below button)
             var font = new Font(GH_FontServer.FamilyStandard, 7f / scale, FontStyle.Regular);
-            var dropdownBg = _dropdownHover ? Color.FromArgb(180, 180, 180) : Color.LightGray;
+            var dropdownBg = _dropdownHover ? ComponentUiColors.DropdownHover : ComponentUiColors.Dropdown;
             graphics.FillRectangle(new SolidBrush(dropdownBg), _dropdownBounds);
-            graphics.DrawRectangle(new Pen(Color.DarkGray, 1f), Rectangle.Round(_dropdownBounds));
+            graphics.DrawRectangle(new Pen(ComponentUiColors.DropdownBorder, 1f), Rectangle.Round(_dropdownBounds));
 
             // Text bounds excluding arrow area for centering
             var textBounds = new RectangleF(_dropdownBounds.X, _dropdownBounds.Y, 
@@ -543,9 +754,9 @@ namespace UR.RTDE.Grasshopper
                 for (int i = 0; i < _dropdownItemBounds.Count; i++)
                 {
                     var itemBounds = _dropdownItemBounds[i];
-                    var itemBg = i == _hoverItemIndex ? Color.FromArgb(200, 200, 200) : Color.LightGray;
+                    var itemBg = i == _hoverItemIndex ? ComponentUiColors.DropdownItemHover : ComponentUiColors.Dropdown;
                     graphics.FillRectangle(new SolidBrush(itemBg), itemBounds);
-                    graphics.DrawRectangle(new Pen(Color.Gray, 0.5f), Rectangle.Round(itemBounds));
+                    graphics.DrawRectangle(new Pen(ComponentUiColors.DropdownItemBorder, 0.5f), Rectangle.Round(itemBounds));
                     graphics.DrawString(UR_ReadComponent.ReadModes[i], font, Brushes.Black, itemBounds, GH_TextRenderingConstants.CenterCenter);
                 }
             }
@@ -564,31 +775,6 @@ namespace UR.RTDE.Grasshopper
                     new PointF(center.X + 4, center.Y - 2)
                 });
             }
-        }
-
-        private static Color Darken(Color c, double amount)
-        {
-            amount = Math.Max(0, Math.Min(1, amount));
-            return Color.FromArgb(c.A, (int)(c.R * (1 - amount)), (int)(c.G * (1 - amount)), (int)(c.B * (1 - amount)));
-        }
-
-        private static GraphicsPath RoundedRect(RectangleF bounds, int radius)
-        {
-            var path = new GraphicsPath();
-            int diameter = radius * 2;
-            var arc = new RectangleF(bounds.Location, new SizeF(diameter, diameter));
-
-            if (radius == 0) { path.AddRectangle(bounds); return path; }
-
-            path.AddArc(arc, 180, 90);
-            arc.X = bounds.Right - diameter;
-            path.AddArc(arc, 270, 90);
-            arc.Y = bounds.Bottom - diameter;
-            path.AddArc(arc, 0, 90);
-            arc.X = bounds.Left;
-            path.AddArc(arc, 90, 90);
-            path.CloseFigure();
-            return path;
         }
 
         public override GH_ObjectResponse RespondToMouseDown(GH_Canvas sender, GH_CanvasMouseEvent e)

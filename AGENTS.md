@@ -5,7 +5,7 @@ This document provides information for AI agents and automated systems working w
 ## Project Overview
 
 **Name**: UR.RTDE.Grasshopper  
-**Version**: 1.3.2  
+**Version**: 1.6.3.1  
 **Type**: Grasshopper plugin for Rhino  
 **Purpose**: Control Universal Robots via RTDE (Real-Time Data Exchange) protocol from Grasshopper, including Robotiq grippers (URCap)  
 **Language**: C# (.NET)  
@@ -18,16 +18,19 @@ UR.RTDE.Grasshopper/
 ├── Components/           # Grasshopper components
 │   ├── UR_SessionComponent.cs       # Session management component
 │   ├── UR_SessionAttributes.cs      # Custom UI attributes for session component
-│   ├── UR_ReadComponent.cs          # Read robot state component (ASYNC)
-│   ├── UR_WriteComponent.cs         # Send commands component
+│   ├── UR_ReadComponent.cs          # Read robot state (timer polling, FK/IK)
+│   ├── UR_WriteComponent.cs         # Discrete commands (motion, IO, TCP)
+│   ├── UR_StreamComponent.cs        # Continuous SpeedJ/ServoJ streaming
 │   └── UR_GripperComponent.cs       # Robotiq gripper control component
 ├── Types/               # Custom Grasshopper types
 │   ├── URSessionGoo.cs              # Grasshopper data type wrapper for URSession
 │   └── URSessionParam.cs            # Custom parameter for session inputs
 ├── Runtime/             # Core runtime functionality
-│   └── URSession.cs                # Wrapper around UR.RTDE library
+│   └── URSession.cs                # UR.RTDE wrapper; control connect fallback + port 30003 diagnostics
 ├── Utils/               # Utility functions
-│   └── PoseUtils.cs                 # Pose conversion utilities
+│   ├── PoseUtils.cs                 # Pose conversion utilities
+│   ├── GrasshopperUiDraw.cs         # Shared UI drawing helpers for attributes
+│   └── NativeBootstrap.cs           # macOS dlopen preload (RTLD_LOCAL) for UR.RTDE dylibs
 ├── Resources/
 │   └── Icons/                       # Component icons (PNG files)
 ├── UR.RTDE.Grasshopper.csproj       # Main project file
@@ -36,7 +39,6 @@ UR.RTDE.Grasshopper/
 
 Tests:
 ├── UR.RTDE.Grasshopper.Tests/      # Unit tests
-│   ├── SimpleTests.cs
 │   ├── URSessionTests.cs
 │   └── PoseUtilsTests.cs
 ```
@@ -73,7 +75,7 @@ Tests:
 **Key Features**:
 - **Event-driven**: Uses timer-based polling instead of blocking calls
 - **Non-blocking**: UI remains responsive during read operations
-- Context menu to select read type (Joints, Pose, IO, Modes)
+- Context menu: Joints, Pose, IO, Modes, Targets, Dynamics, Status, FK (compute), IK (compute)
 - Auto-listen feature for periodic updates (event-driven with timer)
 - Configurable interval presets (20, 50, 100, 200, 500, 1000 ms)
 - Cached data pattern: Timer polls in background, component outputs cached results
@@ -92,9 +94,29 @@ Tests:
 - Timer thread: Polls RTDE in background, caches results
 - Pattern similar to MQTT Subscribe: event-driven with cached data
 
-### 4. UR_WriteComponent
-**Purpose**: Sends commands to robot  
+### 4. UR_StreamComponent
+**Purpose**: Continuous live control via SpeedJ/ServoJ  
+**Location**: `Components/UR_StreamComponent.cs`  
+**Ribbon**: `UR` / `RTDE`, `GH_Exposure.tertiary` (same sub-panel as **UR Write**)  
+**Icon**: `broadcast-duotone.png` (Phosphor *broadcast*, duotone, `#00A3E0` — same cyan as `rocket-launch-duotone.png`)  
+**Key Features**:
+- SpeedJ (`qd[6]`) or ServoJ (`q[6]`) modes via on-component dropdown
+- **Arm stream** button (not persisted on save/load)
+- Min interval rate limiting (20, 50, 100, 200, 500 ms; default 50)
+- Outputs: `OK`, `Message`, `Armed`
+- SpeedStop/ServoStop on disconnect, disarm, or component removal
+
+**Key Fields**:
+- `_kind`: `URStreamKind` (SpeedJ, ServoJ)
+- `_armed`: stream armed flag (reset on Read)
+- `_minIntervalMs`: duplicate-send rate limit
+- `_lastSignature` / `_lastSendUtc`: skip unchanged values within interval
+
+### 5. UR_WriteComponent
+**Purpose**: Sends discrete commands to robot  
 **Location**: `Components/UR_WriteComponent.cs`  
+**Ribbon**: `UR` / `RTDE`, `GH_Exposure.tertiary`  
+**Icon**: `rocket-launch-duotone.png` (Phosphor *rocket-launch*, duotone, `#00A3E0`)  
 **Architecture**: `GH_Component` with direct command execution  
 **Key Features**:
 - **Simple execution**: Direct method calls, no worker pattern
@@ -117,7 +139,7 @@ Tests:
 - Stop and SetDO execute directly during solve
 - Move sequences run in the background and update `Running`, `CurrentIndex`, `Total`, and `Done`
 
-### 5. UR_GripperComponent
+### 6. UR_GripperComponent
 **Purpose**: Control Robotiq grippers via URCap (native, RTDE bridge, or URScript backends)  
 **Location**: `Components/UR_GripperComponent.cs`  
 **Key Features**:
@@ -125,7 +147,7 @@ Tests:
 - Actions: Activate, Open, Close, Move (position/speed/force 0-255)
 - Dynamic inputs based on action/backend (wait-for-motion, install bridge, timeout, port)
 
-### 6. URSession
+### 7. URSession
 **Purpose**: Wrapper around UR.RTDE library  
 **Location**: `Runtime/URSession.cs`  
 **Key Methods**:
@@ -135,13 +157,13 @@ Tests:
 - Various read/command methods
 - Robotiq helpers: `RobotiqActivate/Open/Close/Move` with backend selection and RTDE bridge install
 
-### 7. URSessionGoo
+### 8. URSessionGoo
 **Purpose**: Grasshopper data type for session  
 **Location**: `Types/URSessionGoo.cs`  
 **Inherits**: `GH_Goo<URSession>`  
 **Purpose**: Wraps `URSession` to work with Grasshopper's type system
 
-### 8. PoseUtils
+### 9. PoseUtils
 **Purpose**: Utility functions for pose conversions  
 **Location**: `Utils/PoseUtils.cs`  
 **Key Methods**:
@@ -151,7 +173,7 @@ Tests:
 ## Dependencies
 
 ### NuGet Packages
-- **UR.RTDE** (Version 1.6.3): Main dependency for RTDE communication and Robotiq gripper support
+- **UR.RTDE** (Version 1.6.3.9): Main dependency for RTDE communication and Robotiq gripper support
   - Provides native C++ P/Invoke wrapper
   - Includes native DLLs (rtde.dll, ur_rtde_c_api.dll, boost_thread)
   - Robotiq drivers: `RobotiqGripperNative`, `RobotiqGripperRtde`, `RobotiqGripper` (URScript)
@@ -167,87 +189,19 @@ Tests:
 - `Rhino.Geometry`: Geometry types
 - `Rhino.Display`: Display/viewport functionality
 
-## Async Components Architecture
+## Component Architecture
 
-### Pattern (GrasshopperAsyncComponent 2.0.3)
+All Grasshopper components inherit from `GH_Component` (not `GH_AsyncComponent`). There is no `GrasshopperAsyncComponent` package dependency.
 
-```csharp
-public class MyComponent : GH_AsyncComponent<MyComponent>
-{
-    public MyComponent() : base(...)
-    {
-        BaseWorker = new MyWorker(this);
-    }
-    
-    private class MyWorker : WorkerInstance<MyComponent>
-    {
-        public MyWorker(MyComponent parent, string id = "worker", 
-                       CancellationToken cancellationToken = default)
-            : base(parent, id, cancellationToken) { }
-            
-        public override WorkerInstance<MyComponent> Duplicate(
-            string id, CancellationToken cancellationToken)
-            => new MyWorker(Parent, id, cancellationToken);
-            
-        public override void GetData(IGH_DataAccess da, 
-                                    GH_ComponentParamServer ghParams)
-        {
-            // Collect input data (UI thread)
-        }
-        
-        public override Task DoWork(Action<string, double> reportProgress, 
-                                   Action done)
-        {
-            try
-            {
-                CancellationToken.ThrowIfCancellationRequested();
-                // Perform work (background thread)
-                reportProgress(Id, progress);
-                done();
-            }
-            catch (OperationCanceledException) when 
-                  (CancellationToken.IsCancellationRequested)
-            {
-                // Handle cancellation
-            }
-            return Task.CompletedTask;
-        }
-        
-        public override void SetData(IGH_DataAccess da)
-        {
-            // Output results (UI thread)
-        }
-    }
-}
-```
+### UR Read threading
+- **UI thread**: `SolveInstance` outputs cached data
+- **Timer thread**: `System.Threading.Timer` polls RTDE and updates cache under a lock
+- Auto-listen uses the same timer pattern (20–1000 ms presets)
 
-### Benefits
-- **UI Responsiveness**: 10x improvement, no freezing
-- **Auto-listen**: Can handle 20-50ms intervals without blocking
-- **Cancellation**: User can stop operations mid-execution
-- **Progress reporting**: Visual feedback during operations
-- **Better UX**: Smoother, more professional experience
-
-### Threading Model
-```
-┌─────────────────────────────────────┐
-│         MAIN UI THREAD              │
-│  ┌─────────────────────────────┐    │
-│  │ Grasshopper                 │    │
-│  │  ├─ Canvas (responsive!)    │    │
-│  │  ├─ Components              │    │
-│  │  └─ Async Components        │    │
-│  └─────────────────────────────┘    │
-└─────────────────────────────────────┘
-              ↓ schedules work
-┌─────────────────────────────────────┐
-│       WORKER THREAD POOL            │
-│  ┌───────────┐  ┌───────────┐       │
-│  │ Worker 1  │  │ Worker 2  │       │
-│  │ (Read)    │  │ (Command) │       │
-│  └───────────┘  └───────────┘       │
-└─────────────────────────────────────┘
-```
+### UR Write execution
+- MoveJ/MoveL: explicit **Run** button or optional **Auto Send** (not persisted)
+- Stop/SetDO: run during solve
+- Long motion may continue on a background thread; UI uses `Running` / `Done` outputs
 
 ## Build System
 
@@ -270,6 +224,13 @@ dotnet build -c Release -f net8.0-windows
 
 # Build with yak packaging (automatic when yak is available)
 dotnet build -c Release -f net8.0-windows
+
+# macOS Rhino 8 debug-focused build
+dotnet build UR.RTDE.Grasshopper.csproj -c Debug -f net8.0 /p:BuildYakPackage=false
+
+# macOS Rhino 8 — build and copy to Grasshopper Libraries (Release)
+dotnet build -c Release -f net8.0
+# Debug copy: add /p:CopyToGrasshopperLibrariesOnDebug=true
 ```
 
 ### Custom Build Targets
@@ -284,25 +245,50 @@ dotnet build -c Release -f net8.0-windows
 - **Location**: `UR.RTDE.Grasshopper.Tests/`
 - **Framework**: NUnit
 - **Test Files**:
-  - `SimpleTests.cs`: Basic functionality tests
-  - `URSessionTests.cs`: Session management tests
-  - `PoseUtilsTests.cs`: Pose conversion tests
+  - `URSessionTests.cs`: Session and RTDE API tests (some need URSim)
+  - `PoseUtilsTests.cs`: Pose conversion tests (Rhino.Testing)
 
 ### Running Tests
 ```bash
-# From test project directory
-pwsh run-tests.ps1
+# Unit tests only (no live robot)
+dotnet test UR.RTDE.Grasshopper.Tests/UR.RTDE.Grasshopper.Tests.csproj --filter "Category!=Integration"
+
+# All tests including URSim at 127.0.0.1
+pwsh UR.RTDE.Grasshopper.Tests/run-tests.ps1
 ```
 
-### Async Components Testing
-When testing async components (UR Read, UR Command):
-1. **UI Responsiveness**: Verify canvas interaction during operations
-2. **Auto-listen**: Test at various intervals (20ms - 1000ms)
-3. **Cancellation**: Test right-click → "Cancel" functionality
-4. **Multiple instances**: Test concurrent operations
-5. **Stress test**: 10+ components with auto-listen
-6. **Error handling**: Test disconnect scenarios
-7. **Persistence**: Save/load with configured settings
+Integration tests are tagged `[Category("Integration")]` and require URSim (or a robot) at `127.0.0.1`. CI runs non-Integration tests only.
+
+### URSim via Docker (manual setup)
+
+No Docker launcher component in this repo. Start URSim before **UR Session** using the sibling **UR.RTDE** compose file (ports match [Multi-Actor-Interface-Library/docker/ursim](https://github.com/lasaths/Multi-Actor-Interface-Library/tree/main/docker/ursim)):
+
+```bash
+cd /path/to/UR.RTDE
+docker compose -f docker/ursim/docker-compose.yml up -d
+```
+
+See `UR.RTDE` → [docker/ursim/README.md](../UR.RTDE/docker/ursim/README.md) and this repo `README.md` → **Testing with URSim**.
+
+- IP: **`127.0.0.1`** (not `192.168.56.1` on macOS)
+- **`30004`**: RTDE receive; **`30003`**: RTDE control (required for session connect / MoveJ)
+- Verify: `nc -zv 127.0.0.1 30003` and `nc -zv 127.0.0.1 30004`
+- PolyScope: [http://127.0.0.1:6080/vnc.html?host=localhost&port=6080](http://127.0.0.1:6080/vnc.html?host=localhost&port=6080) — power on, release brakes, wait **1–2 min** before **Connect**
+- `URSession.CreateControlWithFallback()` tries multiple control flags; `LastError` reports if port 30003 is unreachable
+
+### Starting URSim from Grasshopper (not implemented)
+
+| In scope | Out of scope |
+|----------|----------------|
+| Future: `docker compose up` via background process, TCP readiness on 30003/30004 | Installing Docker Desktop |
+| Reuse `URSession` port-check patterns | Linux `--network host` on Mac/Windows |
+| Non-blocking (same as UR Read timer pattern) | Guaranteeing URControl on Apple Silicon |
+
+### Manual component testing
+1. **UR Read auto-listen**: intervals 20ms–1000ms, canvas stays responsive
+2. **UR Write**: Run button, Auto Send (not saved), Stop during motion
+3. **Multiple instances**: concurrent read/write components
+4. **Persistence**: save/load `.gh` with configured read kind and intervals
 
 ## Code Patterns
 
@@ -320,35 +306,6 @@ public class MyComponent : GH_Component
     protected override void RegisterInputParams(GH_InputParamManager p) { }
     protected override void RegisterOutputParams(GH_OutputParamManager p) { }
     protected override void SolveInstance(IGH_DataAccess da) { }
-}
-```
-
-### Async Component Creation Pattern
-```csharp
-public class MyAsyncComponent : GH_AsyncComponent<MyAsyncComponent>
-{
-    public MyAsyncComponent()
-      : base("Name", "Nickname",
-            "Description",
-            "Category", "Subcategory")
-    {
-        BaseWorker = new MyWorker(this);
-    }
-    
-    protected override void RegisterInputParams(GH_InputParamManager p) { }
-    protected override void RegisterOutputParams(GH_OutputParamManager p) { }
-    
-    // Add cancellation menu item
-    public override void AppendAdditionalMenuItems(ToolStripDropDown menu)
-    {
-        base.AppendAdditionalMenuItems(menu);
-        Menu_AppendItem(menu, "Cancel", (s, e) => RequestCancellation());
-    }
-    
-    private class MyWorker : WorkerInstance<MyAsyncComponent>
-    {
-        // Implement GetData, DoWork, SetData, Duplicate
-    }
 }
 ```
 
@@ -383,20 +340,11 @@ if (session == null || !session.IsConnected)
 
 ### Adding a New Component
 1. Create new class in `Components/` directory
-2. Inherit from `GH_Component` or `GH_AsyncComponent<T>`
+2. Inherit from `GH_Component`
 3. Register inputs/outputs in constructor
-4. Implement `SolveInstance` (sync) or worker pattern (async)
+4. Implement `SolveInstance`
 5. Add icon in `Resources/Icons/`
 6. Build and test
-
-### Converting Component to Async
-1. Change base class to `GH_AsyncComponent<YourComponent>`
-2. Add `using GrasshopperAsyncComponent;` and `using System.Threading.Tasks;`
-3. Create worker class inheriting `WorkerInstance<YourComponent>`
-4. Move `SolveInstance` logic to worker's `DoWork` method
-5. Implement `GetData`, `SetData`, and `Duplicate` in worker
-6. Add cancellation support with `CancellationToken.ThrowIfCancellationRequested()`
-7. Add cancellation menu item
 
 ### Modifying Component UI
 1. Create custom `GH_ComponentAttributes` class
@@ -414,8 +362,7 @@ if (session == null || !session.IsConnected)
 ## Version Management
 
 ### Current Version
-- **Version**: 1.3.2 (in `.csproj`)
-- **Tag**: `v1.3.1` (in git)
+- **Version**: 1.6.3.1 (in `.csproj`)
 - **Yak Package**: Available on `yak.rhino3d.com`
 
 ### Version Bump Process
@@ -468,9 +415,14 @@ yak push ur-rtde-grasshopper-<version>-rh8_0-any.yak
 ## Important Notes
 
 ### Safety
-- ⚠️ **Always test with URSim first**
+- ⚠️ **Always test with URSim first** (see **URSim via Docker** under Testing)
 - ⚠️ Robot commands can cause injury
 - ⚠️ No warranties or liability assumed
+
+### URSim / Docker
+- Use `UR.RTDE` → `docker compose -f docker/ursim/docker-compose.yml up -d`
+- Plugin does not start Docker; session connect needs **30003** + **30004** on the host
+- Mac ARM: allow 1–2 min PolyScope boot; `nc` on 30003 succeeding does not mean `RTDEControl` is ready yet
 
 ### Platform Support
 - **net48**: Rhino 7 only
@@ -483,16 +435,14 @@ yak push ur-rtde-grasshopper-<version>-rh8_0-any.yak
 - Windows-specific UI code is expected
 - net48 uses C# latest; ensure `LangVersion` remains aligned if adding pattern matching/using decls
 
-### Async Components Performance
-- UI responsiveness: 10x improvement during operations
-- Auto-listen can now handle 20-50ms intervals without freezing
-- Small memory overhead: ~2KB per component instance
-- Additional dependency: GrasshopperAsyncComponent.dll (21KB)
-- Fully backward compatible with existing .gh files
+### Read component performance
+- Timer-based polling keeps the Grasshopper canvas responsive during auto-listen
+- Auto-listen supports 20–50 ms intervals when the network and robot keep up
 
 ### Icons
 - Icons are embedded resources from `Resources/Icons/`
-- Used icons: binoculars, plugs, plugs-connected, hand-grabbing (gripper), rocket-launch, robot-duotone
+- Used icons: binoculars, plugs, plugs-connected, hand-grabbing (gripper), rocket-launch (write), broadcast (stream), robot-duotone
+- Command/stream duotone color: `#00A3E0` (regenerate with phosphor-icons CLI: `node dist/cli.js icon <name> --weight duotone --color "#00A3E0" --size 24 --format png --out <file>`)
 - Icons must be 24x24 PNG files (all component icons)
 - Icon auto-copy happens during yak build
 
@@ -518,12 +468,11 @@ When making changes:
 3. Test in Rhino 8 (net8.0-windows)
 4. Verify yak package builds correctly
 5. Test installation via yak
-6. Test with URSim (never skip this)
+6. Test with URSim (never skip; `docker/ursim` in UR.RTDE repo, both ports 30003+30004)
 7. Check all component icons display
 8. Verify context menus work
-9. Test auto-listen functionality (especially for async components)
-10. Test cancellation (for async components)
-11. Verify UI responsiveness during operations
+9. Test auto-listen at several intervals
+10. Verify UI responsiveness during auto-listen and motion
 12. Verify all read/command modes work
 13. Verify Robotiq gripper actions on URCap: activate/open/close/move across Native (63352), RTDE bridge (with install), URScript (30002)
 
@@ -531,7 +480,5 @@ When making changes:
 
 - **NuGet Package**: https://www.nuget.org/packages/UR.RTDE/
 - **C++ Library Docs**: https://sdurobotics.gitlab.io/ur_rtde/
-- **GrasshopperAsyncComponent**: https://www.nuget.org/packages/GrasshopperAsyncComponent
-- **Async Blog Post**: https://v1.speckle.systems/blog/async-gh/
 - **Yak Package**: https://yak.rhino3d.com/packages/UR-RTDE-Grasshopper
 - **GitHub**: https://github.com/lasaths/UR.RTDE.Grasshopper

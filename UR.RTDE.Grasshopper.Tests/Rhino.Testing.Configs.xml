@@ -1,4 +1,4 @@
 <?xml version="1.0" encoding="utf-8" ?>
 <Rhino.Testing.Configs>
-  <LoadGrasshopper>true</LoadGrasshopper>
+  <LoadGrasshopper>false</LoadGrasshopper>
 </Rhino.Testing.Configs>

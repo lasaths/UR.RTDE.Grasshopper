@@ -136,3 +136,16 @@ _NCrunch*
 # Standalone yak CLI (downloaded by tools/install-yak.sh)
 tools/yak-cli/
 tools/yak
+
+# graphify knowledge graph output
+graphify-out/
+
+# Local MSBuild overrides (see Directory.Build.props.user.example)
+Directory.Build.props.user
+
+# VS Code / Cursor machine paths (see README — set rhino.mac.app locally)
+.vscode/settings.json
+
+# Local scratch / package output (not part of the solution)
+.tmp_reflect/
+nupkgs/

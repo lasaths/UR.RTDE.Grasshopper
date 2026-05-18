@@ -5,10 +5,11 @@
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
     <AutoGenerateBindingRedirects>false</AutoGenerateBindingRedirects>
     <DisableImplicitFrameworkReferences>false</DisableImplicitFrameworkReferences>
-    <URRTDEVersion>1.6.3</URRTDEVersion>
+    <URRTDEVersion>1.6.3.9</URRTDEVersion>
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="NUnit" Version="3.14.0" />
     <PackageReference Include="NUnit3TestAdapter" Version="4.6.0" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
     <PackageReference Include="Rhino.Testing" Version="9.0.0-beta" />
@@ -34,9 +35,34 @@
 
   <Target Name="CopyURRTDENativeDependencies" AfterTargets="Build">
     <ItemGroup>
-      <URRTDENativeFiles Include="$(NuGetPackageRoot)ur.rtde\$(URRTDEVersion)\runtimes\win-x64\native\*.dll" />
+      <URRTDEFiles Include="$(NuGetPackageRoot)ur.rtde\$(URRTDEVersion)\lib\$(TargetFramework)\UR.RTDE.dll" />
+      <URRTDENativeFiles Include="$(NuGetPackageRoot)ur.rtde\$(URRTDEVersion)\runtimes\**\*" />
     </ItemGroup>
 
-    <Copy SourceFiles="@(URRTDENativeFiles)" DestinationFolder="$(OutputPath)" Condition="Exists('%(URRTDENativeFiles.Identity)')" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(URRTDEFiles)" DestinationFolder="$(OutputPath)" Condition="Exists('%(URRTDEFiles.Identity)')" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(URRTDENativeFiles)" DestinationFolder="$(OutputPath)\runtimes\%(RecursiveDir)" Condition="Exists('%(URRTDENativeFiles.Identity)')" SkipUnchangedFiles="true" />
+
+    <ItemGroup>
+      <NativeDLLs Include="$(OutputPath)\runtimes\win-x64\native\*.dll" />
+      <NativeMacLibs Include="$(OutputPath)\runtimes\osx-arm64\native\libur_rtde_c_api.dylib"
+                     Condition="Exists('$(OutputPath)\runtimes\osx-arm64\native\libur_rtde_c_api.dylib')" />
+      <NativeMacLibs Include="$(OutputPath)\runtimes\osx-x64\native\libur_rtde_c_api.dylib"
+                     Condition="!Exists('$(OutputPath)\runtimes\osx-arm64\native\libur_rtde_c_api.dylib') and Exists('$(OutputPath)\runtimes\osx-x64\native\libur_rtde_c_api.dylib')" />
+    </ItemGroup>
+    <Copy SourceFiles="@(NativeDLLs)" DestinationFolder="$(OutputPath)" Condition="Exists('%(NativeDLLs.Identity)')" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(NativeMacLibs)" DestinationFolder="$(OutputPath)" Condition="Exists('%(NativeMacLibs.Identity)')" SkipUnchangedFiles="true" />
+    <ItemGroup>
+      <MacDylibsToSign Include="$(OutputPath)*.dylib" />
+      <MacDylibsToSign Include="$(OutputPath)runtimes/**/native/*.dylib" />
+    </ItemGroup>
+    <Exec Command="codesign --force --sign - &quot;%(MacDylibsToSign.Identity)&quot;" Condition="$([MSBuild]::IsOSPlatform('OSX')) and Exists('%(MacDylibsToSign.Identity)')" />
+  </Target>
+
+  <!-- NUnit loads UR.RTDE.Grasshopper.dll; the plugin project emits .gha -->
+  <Target Name="CopyGhaAsDllForTests" AfterTargets="CopyURRTDENativeDependencies">
+    <Copy SourceFiles="$(OutputPath)UR.RTDE.Grasshopper.gha"
+          DestinationFiles="$(OutputPath)UR.RTDE.Grasshopper.dll"
+          Condition="Exists('$(OutputPath)UR.RTDE.Grasshopper.gha')"
+          SkipUnchangedFiles="true" />
   </Target>
 </Project>

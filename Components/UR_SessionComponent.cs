@@ -1,4 +1,5 @@
 using System;
+using System.Threading;
 using Grasshopper.Kernel;
 using Grasshopper.GUI;
 using Grasshopper.GUI.Canvas;
@@ -11,6 +12,9 @@ namespace UR.RTDE.Grasshopper
 {
     public class UR_SessionComponent : GH_Component
     {
+        private readonly object _sessionLock = new object();
+        private int _connectBusy;
+
         internal URSession _session;
         internal string _currentIp = string.Empty;
         internal int _lastTimeoutMs = 2000;
@@ -53,26 +57,28 @@ namespace UR.RTDE.Grasshopper
             _lastTimeoutMs = timeoutMs;
 
             bool createdOrReconnected = false;
-
-            if (_session == null || !string.Equals(_currentIp, ip, StringComparison.Ordinal) || reconnect)
+            lock (_sessionLock)
             {
-                _session?.Dispose();
-                _session = new URSession(ip);
-                _currentIp = ip ?? string.Empty;
-                createdOrReconnected = true;
-            }
+                if (_session == null || !string.Equals(_currentIp, ip, StringComparison.Ordinal) || reconnect)
+                {
+                    _session?.Dispose();
+                    _session = new URSession(ip);
+                    _currentIp = ip ?? string.Empty;
+                    createdOrReconnected = true;
+                }
 
-            bool isConnected = _session?.IsConnected ?? false;
-            string status = createdOrReconnected ? "Session created" : "Session reused";
-            if (!isConnected)
-            {
-                status += " (not connected)";
-            }
+                bool isConnected = _session?.IsConnected ?? false;
+                string status = createdOrReconnected ? "Session created" : "Session reused";
+                if (!isConnected)
+                {
+                    status += " (not connected)";
+                }
 
-            da.SetData(0, _session != null ? new URSessionGoo(_session) : null);
-            da.SetData(1, isConnected);
-            da.SetData(2, status);
-            da.SetData(3, _session?.LastError ?? string.Empty);
+                da.SetData(0, _session != null ? new URSessionGoo(_session) : null);
+                da.SetData(1, isConnected);
+                da.SetData(2, status);
+                da.SetData(3, _session?.LastError ?? string.Empty);
+            }
         }
 
         public override void CreateAttributes()
@@ -100,8 +106,11 @@ namespace UR.RTDE.Grasshopper
         public override void RemovedFromDocument(GH_Document document)
         {
             base.RemovedFromDocument(document);
-            _session?.Dispose();
-            _session = null;
+            lock (_sessionLock)
+            {
+                _session?.Dispose();
+                _session = null;
+            }
         }
 
         public override void DrawViewportWires(IGH_PreviewArgs args)
@@ -114,7 +123,7 @@ namespace UR.RTDE.Grasshopper
 
             var origin = Point3d.Origin;
             var size = 6;
-            var color = isConnected ? Color.FromArgb(0x10, 0xB9, 0x81) : Color.FromArgb(120, 120, 120);
+            var color = isConnected ? ComponentUiColors.Active : ComponentUiColors.Inactive;
 
             args.Display.DrawPoint(origin, PointStyle.RoundSimple, size, color);
 
@@ -133,6 +142,56 @@ namespace UR.RTDE.Grasshopper
                 var box = new BoundingBox(new Point3d(-100, -100, -100), new Point3d(100, 100, 100));
                 return box;
             }
+        }
+
+        internal bool TryBeginConnectToggle()
+        {
+            return Interlocked.CompareExchange(ref _connectBusy, 1, 0) == 0;
+        }
+
+        internal void EndConnectToggle()
+        {
+            Interlocked.Exchange(ref _connectBusy, 0);
+        }
+
+        internal ConnectToggleResult ToggleConnection()
+        {
+            lock (_sessionLock)
+            {
+                var disconnect = _session?.IsConnected ?? false;
+                if (disconnect)
+                {
+                    _session?.Dispose();
+                    _session = null;
+                    return ConnectToggleResult.Success();
+                }
+
+                var timeoutMs = _lastTimeoutMs;
+                var ip = string.IsNullOrWhiteSpace(_currentIp) ? "127.0.0.1" : _currentIp;
+
+                _session ??= new URSession(ip);
+                if (_session.Connect(timeoutMs))
+                    return ConnectToggleResult.Success();
+
+                var message = string.IsNullOrWhiteSpace(_session.LastError) ? "Failed to connect" : _session.LastError;
+                return ConnectToggleResult.Failure(message);
+            }
+        }
+
+        internal readonly struct ConnectToggleResult
+        {
+            private ConnectToggleResult(bool ok, string message)
+            {
+                Ok = ok;
+                Message = message;
+            }
+
+            public bool Ok { get; }
+            public string Message { get; }
+
+            public static ConnectToggleResult Success() => new ConnectToggleResult(true, null);
+
+            public static ConnectToggleResult Failure(string message) => new ConnectToggleResult(false, message);
         }
     }
 }

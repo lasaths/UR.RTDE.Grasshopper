@@ -6,9 +6,9 @@
   -->
   <PropertyGroup>
     <RhinoMacApp Condition="'$(RhinoMacApp)' == '' and '$(RHINO_MAC_APP)' != ''">$(RHINO_MAC_APP)</RhinoMacApp>
-    <RhinoMacApp Condition="'$(RhinoMacApp)' == '' and Exists('/Volumes/Storage/00_Applications/Rhino 8.app')">/Volumes/Storage/00_Applications/Rhino 8.app</RhinoMacApp>
     <RhinoMacApp Condition="'$(RhinoMacApp)' == '' and Exists('/Applications/Rhino 8.app')">/Applications/Rhino 8.app</RhinoMacApp>
     <RhinoMacApp Condition="'$(RhinoMacApp)' == '' and Exists('/Applications/Rhinoceros.app')">/Applications/Rhinoceros.app</RhinoMacApp>
+    <RhinoMacApp Condition="'$(RhinoMacApp)' == '' and Exists('/Volumes/Storage/00_Applications/Rhino 8.app')">/Volumes/Storage/00_Applications/Rhino 8.app</RhinoMacApp>
     <YakMacPath Condition="'$(RhinoMacApp)' != ''">$(RhinoMacApp)/Contents/Resources/bin/yak</YakMacPath>
   </PropertyGroup>
 </Project>

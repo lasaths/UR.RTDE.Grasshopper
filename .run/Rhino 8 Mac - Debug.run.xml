@@ -1,0 +1,18 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="Rhino 8 Mac - Debug" type="LaunchSettings" factoryName=".NET Launch Settings Profile">
+    <option name="LAUNCH_PROFILE_PROJECT_FILE_PATH" value="$PROJECT_DIR$/UR.RTDE.Grasshopper.csproj" />
+    <option name="LAUNCH_PROFILE_NAME" value="Rhino 8 Mac - Debug" />
+    <option name="USE_EXTERNAL_CONSOLE" value="0" />
+    <option name="USE_MONO" value="0" />
+    <option name="RUNTIME_ARGUMENTS" value="" />
+    <option name="GENERATE_APPLICATIONHOST_CONFIG" value="false" />
+    <option name="SHOW_IIS_EXPRESS_OUTPUT_IN_DEBUG_OUTPUT" value="false" />
+    <method v="2">
+      <option name="BuildProject" enabled="true">
+        <option name="CONFIGURATION" value="Debug" />
+        <option name="PROJECT_NAME" value="UR.RTDE.Grasshopper" />
+        <option name="TARGET_FRAMEWORK" value="net8.0" />
+      </option>
+    </method>
+  </configuration>
+</component>

@@ -1,8 +1,10 @@
 using System;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 using Grasshopper;
+using Rhino;
 using Grasshopper.Kernel.Attributes;
 using Grasshopper.GUI.Canvas;
 using Grasshopper.Kernel;
@@ -29,9 +31,6 @@ namespace UR.RTDE.Grasshopper
         private RectangleF _buttonBounds;
         private bool _mouseDown;
         private bool _mouseOver;
-
-		static readonly Color Success = Color.FromArgb(0x10, 0xB9, 0x81);
-		static readonly Color Danger = Color.FromArgb(0xEF, 0x44, 0x44);
 
 		/// <summary>
 		/// Computes layout bounds and reserves space for the connect/disconnect button.
@@ -74,23 +73,10 @@ namespace UR.RTDE.Grasshopper
             var scale = GH_GraphicsUtil.UiScale <= 0 ? 1f : GH_GraphicsUtil.UiScale;
 
             bool isConnected = _owner._session?.IsConnected ?? false;
-            string label = isConnected ? "Disconnect" : "Connect";
+            string label = isConnected ? ComponentButtonLabels.Disconnect : ComponentButtonLabels.Connect;
             
-            var bg = isConnected ? Danger : Success;
-            var hover = Color.FromArgb(
-                Math.Min(255, bg.R + 20),
-                Math.Min(255, bg.G + 20),
-                Math.Min(255, bg.B + 20));
-
-            var fill = _mouseDown ? Darken(bg, 0.2) : _mouseOver ? hover : bg;
-
-            var corner = (int)Math.Max(2, Math.Round(8f / scale));
-            using (var path = RoundedRect(_buttonBounds, corner))
-            {
-                using (var brush = new SolidBrush(fill))
-                    graphics.FillPath(brush, path);
-                graphics.DrawPath(new Pen(Darken(bg, 0.4f), 1.2f), path);
-            }
+            var bg = isConnected ? ComponentUiColors.Danger : ComponentUiColors.Active;
+            GrasshopperUiDraw.DrawRoundedButton(graphics, _buttonBounds, scale, bg, _mouseDown, _mouseOver);
 
             var std = GH_FontServer.Standard;
             var buttonFont = new Font(std.FontFamily, std.Size / scale, FontStyle.Bold);
@@ -113,22 +99,6 @@ namespace UR.RTDE.Grasshopper
                 }
             }
             graphics.DrawString(text, buttonFont, Brushes.White, _buttonBounds, GH_TextRenderingConstants.CenterCenter);
-        }
-
-		/// <summary>
-		/// Returns a darker version of the given color.
-		/// </summary>
-		/// <param name="c">Base color.</param>
-		/// <param name="amount">Darken factor in [0,1].</param>
-		/// <returns>Darker color.</returns>
-        private static Color Darken(Color c, double amount)
-        {
-            amount = Math.Max(0, Math.Min(1, amount));
-            return Color.FromArgb(
-                c.A,
-                (int)(c.R * (1 - amount)),
-                (int)(c.G * (1 - amount)),
-                (int)(c.B * (1 - amount)));
         }
 
 		/// <summary>
@@ -161,39 +131,41 @@ namespace UR.RTDE.Grasshopper
 
                 if (wasPressed)
                 {
-                    if (_owner._session == null)
+                    var owner = _owner;
+                    if (!owner.TryBeginConnectToggle())
                     {
-                        _owner._session = new URSession(
-                            string.IsNullOrWhiteSpace(_owner._currentIp) ? "127.0.0.1" : _owner._currentIp);
+                        Owner.AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, "Connect/disconnect already in progress");
+                        Owner.ExpireSolution(true);
+                        return GH_ObjectResponse.Release;
                     }
 
-                    try
+                    Task.Run(() =>
                     {
-                        if (_owner._session.IsConnected)
-                        {
-                            _owner._session.Dispose();
-                            _owner._session = null;
-                        }
-                        else
-                        {
-                            bool connected = _owner._session.Connect(_owner._lastTimeoutMs);
-                            if (!connected)
-                            {
-                                var message = string.IsNullOrWhiteSpace(_owner._session.LastError)
-                                    ? "Failed to connect"
-                                    : _owner._session.LastError;
-                                Owner.AddRuntimeMessage(GH_RuntimeMessageLevel.Error, message);
-                            }
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        try { _owner._session?.Dispose(); } catch { }
-                        _owner._session = null;
-                        Owner.AddRuntimeMessage(GH_RuntimeMessageLevel.Error, ex.Message);
-                    }
+                        string message = null;
+                        var level = GH_RuntimeMessageLevel.Error;
 
-                    Owner.ExpireSolution(true);
+                        try
+                        {
+                            var result = owner.ToggleConnection();
+                            message = result.Ok ? null : result.Message;
+                        }
+                        catch (Exception ex)
+                        {
+                            message = ex.Message;
+                        }
+                        finally
+                        {
+                            owner.EndConnectToggle();
+                        }
+
+                        RhinoApp.InvokeOnUiThread((Action)(() =>
+                        {
+                            if (!string.IsNullOrEmpty(message))
+                                Owner.AddRuntimeMessage(level, message);
+                            Owner.ExpireSolution(true);
+                        }));
+                    });
+
                     return GH_ObjectResponse.Release;
                 }
             }
@@ -228,37 +200,6 @@ namespace UR.RTDE.Grasshopper
             }
 
             return base.RespondToMouseMove(sender, e);
-        }
-
-		/// <summary>
-		/// Creates a rounded rectangle graphics path.
-		/// </summary>
-		/// <param name="bounds">Rectangle bounds.</param>
-		/// <param name="radius">Corner radius in pixels.</param>
-		/// <returns>Graphics path of the rounded rectangle.</returns>
-        private static System.Drawing.Drawing2D.GraphicsPath RoundedRect(RectangleF bounds, int radius)
-        {
-            var path = new System.Drawing.Drawing2D.GraphicsPath();
-            int diameter = radius * 2;
-            var size = new Size(diameter, diameter);
-            var arc = new RectangleF(bounds.Location, size);
-
-            if (radius == 0)
-            {
-                path.AddRectangle(bounds);
-                return path;
-            }
-
-            path.AddArc(arc, 180, 90);
-            arc.X = bounds.Right - diameter;
-            path.AddArc(arc, 270, 90);
-            arc.Y = bounds.Bottom - diameter;
-            path.AddArc(arc, 0, 90);
-            arc.X = bounds.Left;
-            path.AddArc(arc, 90, 90);
-
-            path.CloseFigure();
-            return path;
         }
     }
 }

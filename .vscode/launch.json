@@ -2,16 +2,29 @@
   "version": "0.2.0",
   "configurations": [
     {
+      "name": "Rhino 8 Mac - Debug",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "debug-mac",
+      "postDebugTask": "restore-grasshopper-libraries",
+      "program": "${config:rhino.mac.app}/Contents/MacOS/Rhinoceros",
+      "args": ["-runscript=_Grasshopper"],
+      "env": {
+        "RHINO_PACKAGE_DIRS": "${workspaceFolder}/bin/Debug/net8.0"
+      },
+      "cwd": "${workspaceFolder}",
+      "stopAtEntry": false,
+      "console": "internalConsole"
+    },
+    {
       "name": "Rhino 8 - netcore",
       "type": "coreclr",
       "request": "launch",
       "preLaunchTask": "build",
       "program": "",
       "osx": {
-        "program": "/Volumes/Storage/00_Applications/Rhino 8.app/Contents/MacOS/Rhinoceros",
-        "args": [
-          "-runscript=_Grasshopper"
-        ]
+        "program": "${config:rhino.mac.app}/Contents/MacOS/Rhinoceros",
+        "args": ["-runscript=_Grasshopper"]
       },
       "windows": {
         "program": "C:\\Program Files\\Rhino 8\\System\\Rhino.exe",
@@ -19,7 +32,7 @@
         "args": "/netcore /runscript=\"_Grasshopper\""
       },
       "env": {
-        "RHINO_PACKAGE_DIRS": "${workspaceFolder}/bin/Debug"
+        "RHINO_PACKAGE_DIRS": "${workspaceFolder}/bin/Debug/net8.0"
       },
       "cwd": "${workspaceFolder}",
       "stopAtEntry": false,
@@ -36,12 +49,12 @@
         "args": "/netfx /runscript=\"_Grasshopper\""
       },
       "env": {
-        "RHINO_PACKAGE_DIRS": "${workspaceFolder}/bin/Debug"
+        "RHINO_PACKAGE_DIRS": "${workspaceFolder}/bin/Debug/net48${pathSeparator}${env:RHINO_PACKAGE_DIRS}"
       },
       "cwd": "${workspaceFolder}",
       "stopAtEntry": false,
       "console": "internalConsole"
-    },
+    }
   ],
   "compounds": []
 }

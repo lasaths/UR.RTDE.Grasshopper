@@ -568,23 +568,10 @@ namespace UR.RTDE.Grasshopper
 
                 // Activate button
                 bool isActivated = GripperComponent.IsActivated;
-                string activateLabel = "Activate";
+                string activateLabel = ComponentButtonLabels.Activate;
                 
-                var activateBg = isActivated ? Color.FromArgb(16, 185, 129) : Color.FromArgb(160, 160, 160);
-                var activateHover = Color.FromArgb(
-                    Math.Min(255, activateBg.R + 20),
-                    Math.Min(255, activateBg.G + 20),
-                    Math.Min(255, activateBg.B + 20));
-                var activateFill = _activateMouseDown ? Darken(activateBg, 0.2) : _activateMouseOver ? activateHover : activateBg;
-
-                var cornerRadius = (int)Math.Max(2, Math.Round(8f / scale));
-                using (var path = RoundedRect(_activateButtonBounds, cornerRadius))
-                {
-                    using (var brush = new SolidBrush(activateFill))
-                        graphics.FillPath(brush, path);
-                    using (var pen = new Pen(Darken(activateBg, 0.4), 1.2f))
-                        graphics.DrawPath(pen, path);
-                }
+                var activateBg = GrasshopperUiDraw.ToggleButtonBase(isActivated, ComponentUiColors.Active);
+                GrasshopperUiDraw.DrawRoundedButton(graphics, _activateButtonBounds, scale, activateBg, _activateMouseDown, _activateMouseOver);
 
                 var std = GH_FontServer.Standard;
                 var buttonFont = new Font(std.FontFamily, std.Size / scale, FontStyle.Bold);
@@ -592,81 +579,23 @@ namespace UR.RTDE.Grasshopper
 
                 // Open button
                 bool isOpen = GripperComponent.IsOpen;
-                string openLabel = "Open";
+                string openLabel = ComponentButtonLabels.Open;
                 
-                var openBg = isOpen ? Color.FromArgb(16, 185, 129) : Color.FromArgb(160, 160, 160); // Green if open, gray if closed
-                var openHover = Color.FromArgb(
-                    Math.Min(255, openBg.R + 20),
-                    Math.Min(255, openBg.G + 20),
-                    Math.Min(255, openBg.B + 20));
-                var openFill = _openMouseDown ? Darken(openBg, 0.2) : _openMouseOver ? openHover : openBg;
-
-                using (var path = RoundedRect(_openButtonBounds, cornerRadius))
-                {
-                    using (var brush = new SolidBrush(openFill))
-                        graphics.FillPath(brush, path);
-                    using (var pen = new Pen(Darken(openBg, 0.4), 1.2f))
-                        graphics.DrawPath(pen, path);
-                }
+                var openBg = GrasshopperUiDraw.ToggleButtonBase(isOpen, ComponentUiColors.Active);
+                GrasshopperUiDraw.DrawRoundedButton(graphics, _openButtonBounds, scale, openBg, _openMouseDown, _openMouseOver);
 
                 graphics.DrawString(openLabel, buttonFont, Brushes.White, _openButtonBounds, GH_TextRenderingConstants.CenterCenter);
 
                 // Close button
-                string closeLabel = "Close";
+                string closeLabel = ComponentButtonLabels.Close;
                 
-                var closeBg = !isOpen ? Color.FromArgb(16, 185, 129) : Color.FromArgb(239, 68, 68); // Green if closed, red if open
-                var closeHover = Color.FromArgb(
-                    Math.Min(255, closeBg.R + 20),
-                    Math.Min(255, closeBg.G + 20),
-                    Math.Min(255, closeBg.B + 20));
-                var closeFill = _closeMouseDown ? Darken(closeBg, 0.2) : _closeMouseOver ? closeHover : closeBg;
-
-                using (var path = RoundedRect(_closeButtonBounds, cornerRadius))
-                {
-                    using (var brush = new SolidBrush(closeFill))
-                        graphics.FillPath(brush, path);
-                    using (var pen = new Pen(Darken(closeBg, 0.4), 1.2f))
-                        graphics.DrawPath(pen, path);
-                }
+                var closeBg = GrasshopperUiDraw.ToggleButtonBase(!isOpen, ComponentUiColors.Active);
+                if (isOpen) closeBg = ComponentUiColors.Danger;
+                GrasshopperUiDraw.DrawRoundedButton(graphics, _closeButtonBounds, scale, closeBg, _closeMouseDown, _closeMouseOver);
 
                 graphics.DrawString(closeLabel, buttonFont, Brushes.White, _closeButtonBounds, GH_TextRenderingConstants.CenterCenter);
                 buttonFont.Dispose();
             }
-        }
-
-        private static Color Darken(Color c, double amount)
-        {
-            amount = Math.Max(0, Math.Min(1, amount));
-            return Color.FromArgb(
-                c.A,
-                (int)(c.R * (1 - amount)),
-                (int)(c.G * (1 - amount)),
-                (int)(c.B * (1 - amount)));
-        }
-
-        private static System.Drawing.Drawing2D.GraphicsPath RoundedRect(RectangleF bounds, int radius)
-        {
-            var path = new System.Drawing.Drawing2D.GraphicsPath();
-            int diameter = radius * 2;
-            var size = new Size(diameter, diameter);
-            var arc = new RectangleF(bounds.Location, size);
-
-            if (radius == 0)
-            {
-                path.AddRectangle(bounds);
-                return path;
-            }
-
-            path.AddArc(arc, 180, 90);
-            arc.X = bounds.Right - diameter;
-            path.AddArc(arc, 270, 90);
-            arc.Y = bounds.Bottom - diameter;
-            path.AddArc(arc, 0, 90);
-            arc.X = bounds.Left;
-            path.AddArc(arc, 90, 90);
-
-            path.CloseFigure();
-            return path;
         }
 
         public override GH_ObjectResponse RespondToMouseDown(GH_Canvas sender, GH_CanvasMouseEvent e)

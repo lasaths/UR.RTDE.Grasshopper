@@ -12,10 +12,23 @@ using Grasshopper.GUI;
 using Grasshopper.GUI.Canvas;
 using Grasshopper.Kernel.Attributes;
 using Rhino;
+using Rhino.Geometry;
 
 namespace UR.RTDE.Grasshopper
 {
-    public enum URActionKind { MoveJ, MoveL, Stop, SetDO }
+    public enum URActionKind
+    {
+        MoveJ,
+        MoveL,
+        Stop,
+        SetDO,
+        SetAO,
+        SetToolDO,
+        SetTCP,
+        SetPayload,
+        SpeedStop,
+        ServoStop
+    }
 
     public class UR_WriteComponent : GH_Component
     {
@@ -41,7 +54,13 @@ namespace UR.RTDE.Grasshopper
         private GH_RuntimeMessageLevel? _stickyRuntimeLevel;
         private string _stickyRuntimeMessage;
 
-        internal static readonly string[] ActionModes = { "MoveJ", "MoveL", "Stop", "SetDO" };
+        private const int MotionWaitTimeoutMs = 120_000;
+
+        internal static readonly string[] ActionModes =
+        {
+            "MoveJ", "MoveL", "Stop", "Set DO", "Set AO", "Tool DO",
+            "Set TCP", "Set Payload", "Speed Stop", "Servo Stop"
+        };
 
         public UR_WriteComponent()
           : base("UR Write", "URWrite",
@@ -116,22 +135,31 @@ namespace UR.RTDE.Grasshopper
                         break;
 
                     case URActionKind.SetDO:
-                        if (session == null || !session.IsConnected)
-                        {
-                            SetFailedState("Session not connected");
-                            WriteStateOutputs(da);
-                            return;
-                        }
+                        HandleSetDO(da, session);
+                        break;
 
-                        int pin = 0;
-                        bool val = false;
-                        da.GetData(1, ref pin);
-                        da.GetData(2, ref val);
-                        bool setDoResult = session.SetStandardDigitalOut(pin, val);
-                        SetIdleState(setDoResult, setDoResult
-                            ? $"Digital output {pin} set to {val}"
-                            : $"SetDO failed: {session.LastError ?? "Unknown error"}");
-                        WriteStateOutputs(da);
+                    case URActionKind.SetAO:
+                        HandleSetAO(da, session);
+                        break;
+
+                    case URActionKind.SetToolDO:
+                        HandleSetToolDO(da, session);
+                        break;
+
+                    case URActionKind.SetTCP:
+                        HandleSetTCP(da, session);
+                        break;
+
+                    case URActionKind.SetPayload:
+                        HandleSetPayload(da, session);
+                        break;
+
+                    case URActionKind.SpeedStop:
+                        HandleSpeedStop(da, session);
+                        break;
+
+                    case URActionKind.ServoStop:
+                        HandleServoStop(da, session);
                         break;
 
                     default:
@@ -181,6 +209,195 @@ namespace UR.RTDE.Grasshopper
         {
             lock (_stateLock)
                 return _autoSend && _autoSendInitialized;
+        }
+
+        private void HandleSetDO(IGH_DataAccess da, URSession session)
+        {
+            if (session == null || !session.IsConnected)
+            {
+                SetFailedState("Session not connected");
+                WriteStateOutputs(da);
+                return;
+            }
+
+            int pin = 0;
+            bool val = false;
+            da.GetData(1, ref pin);
+            da.GetData(2, ref val);
+            bool ok = session.SetStandardDigitalOut(pin, val);
+            SetIdleState(ok, ok
+                ? $"Digital output {pin} set to {val}"
+                : $"SetDO failed: {session.LastError ?? "Unknown error"}");
+            WriteStateOutputs(da);
+        }
+
+        private void HandleSetAO(IGH_DataAccess da, URSession session)
+        {
+            if (session == null || !session.IsConnected)
+            {
+                SetFailedState("Session not connected");
+                WriteStateOutputs(da);
+                return;
+            }
+
+            int index = 0;
+            double value = 0.0;
+            bool useCurrent = false;
+            da.GetData(1, ref index);
+            da.GetData(2, ref value);
+            da.GetData(3, ref useCurrent);
+            var mode = useCurrent ? URAnalogOutputMode.Current : URAnalogOutputMode.Voltage;
+            bool ok = session.SetAnalogOutput(index, value, mode);
+            SetIdleState(ok, ok
+                ? $"Analog output {index} set to {value} ({mode})"
+                : $"SetAO failed: {session.LastError ?? "Unknown error"}");
+            WriteStateOutputs(da);
+        }
+
+        private void HandleSetToolDO(IGH_DataAccess da, URSession session)
+        {
+            if (session == null || !session.IsConnected)
+            {
+                SetFailedState("Session not connected");
+                WriteStateOutputs(da);
+                return;
+            }
+
+            int pin = 0;
+            bool val = false;
+            da.GetData(1, ref pin);
+            da.GetData(2, ref val);
+            bool ok = session.SetToolDigitalOut(pin, val);
+            SetIdleState(ok, ok
+                ? $"Tool digital output {pin} set to {val}"
+                : $"Tool DO failed: {session.LastError ?? "Unknown error"}");
+            WriteStateOutputs(da);
+        }
+
+        private void HandleSetTCP(IGH_DataAccess da, URSession session)
+        {
+            if (session == null || !session.IsConnected)
+            {
+                SetFailedState("Session not connected");
+                WriteStateOutputs(da);
+                return;
+            }
+
+            if (!TryGetSingleTcpPose(da, out var pose))
+            {
+                WriteStateOutputs(da);
+                return;
+            }
+
+            bool ok = session.SetTcp(pose);
+            SetIdleState(ok, ok
+                ? $"TCP updated: {FormatVector(pose)}"
+                : $"SetTCP failed: {session.LastError ?? "Unknown error"}");
+            WriteStateOutputs(da);
+        }
+
+        private void HandleSetPayload(IGH_DataAccess da, URSession session)
+        {
+            if (session == null || !session.IsConnected)
+            {
+                SetFailedState("Session not connected");
+                WriteStateOutputs(da);
+                return;
+            }
+
+            double mass = 1.0;
+            da.GetData(1, ref mass);
+            var cog = new Point3d(0, 0, 0);
+            da.GetData(2, ref cog);
+            var cogArr = new[] { cog.X, cog.Y, cog.Z };
+            bool ok = session.SetPayload(mass, cogArr);
+            SetIdleState(ok, ok
+                ? $"Payload set: mass {mass}, CoG [{cog.X:0.###}, {cog.Y:0.###}, {cog.Z:0.###}]"
+                : $"SetPayload failed: {session.LastError ?? "Unknown error"}");
+            WriteStateOutputs(da);
+        }
+
+        private void HandleSpeedStop(IGH_DataAccess da, URSession session)
+        {
+            if (session == null || !session.IsConnected)
+            {
+                SetFailedState("Session not connected");
+                WriteStateOutputs(da);
+                return;
+            }
+
+            double accel = 10.0;
+            da.GetData(1, ref accel);
+            bool ok = session.SpeedStop(accel);
+            SetIdleState(ok, ok
+                ? $"SpeedStop sent (accel {accel})"
+                : $"SpeedStop failed: {session.LastError ?? "Unknown error"}");
+            WriteStateOutputs(da);
+        }
+
+        private void HandleServoStop(IGH_DataAccess da, URSession session)
+        {
+            if (session == null || !session.IsConnected)
+            {
+                SetFailedState("Session not connected");
+                WriteStateOutputs(da);
+                return;
+            }
+
+            double accel = 0.5;
+            da.GetData(1, ref accel);
+            bool ok = session.ServoStop(accel);
+            SetIdleState(ok, ok
+                ? $"ServoStop sent (accel {accel})"
+                : $"ServoStop failed: {session.LastError ?? "Unknown error"}");
+            WriteStateOutputs(da);
+        }
+
+        private bool TryGetSingleTcpPose(IGH_DataAccess da, out double[] pose)
+        {
+            pose = null;
+
+            foreach (var inp in Params.Input)
+            {
+                if (inp is not Param_Plane) continue;
+                var planeData = inp.VolatileData;
+                if (planeData.PathCount > 0 && planeData.DataCount > 0)
+                {
+                    foreach (var item in planeData.AllData(true))
+                    {
+                        if (item is global::Grasshopper.Kernel.Types.GH_Plane ghPlane && ghPlane.Value.IsValid)
+                        {
+                            pose = PoseUtils.PlaneToPose(ghPlane.Value);
+                            return true;
+                        }
+                    }
+                }
+            }
+
+            if (Params.Input.Count < 2) return false;
+            var poseParam = Params.Input[1];
+            if (poseParam is Param_Plane) return false;
+            var poseData = poseParam.VolatileData;
+            if (poseData.PathCount > 0 && poseData.DataCount > 0)
+            {
+                var branch = poseData.get_Branch(0);
+                if (branch.Count >= 6)
+                {
+                    pose = new double[6];
+                    for (int j = 0; j < 6; j++)
+                    {
+                        if (!TryExtractDouble(branch[j], out pose[j]))
+                        {
+                            SetFailedState($"Invalid pose value at index {j}");
+                            return false;
+                        }
+                    }
+                    return true;
+                }
+            }
+
+            SetFailedState("Provide target Plane or pose [x,y,z,rx,ry,rz]");
+            return false;
         }
 
         private void HandleMoveJ(IGH_DataAccess da, bool hasSession, URSession session)
@@ -256,7 +473,7 @@ namespace UR.RTDE.Grasshopper
                     if (_autoSend)
                     {
                         if (ShouldShowAutoSendIdleMessage())
-                            SetInfoState("Auto Send armed. Waiting for new input.");
+                            SetInfoState("Auto Send on. Waiting for new input.");
                         else
                             SetInfoState("Auto Send will send the next new target.");
                     }
@@ -378,7 +595,7 @@ namespace UR.RTDE.Grasshopper
                     if (_autoSend)
                     {
                         if (ShouldShowAutoSendIdleMessage())
-                            SetInfoState("Auto Send armed. Waiting for new input.");
+                            SetInfoState("Auto Send on. Waiting for new input.");
                         else
                             SetInfoState("Auto Send will send the next new target.");
                     }
@@ -416,6 +633,19 @@ namespace UR.RTDE.Grasshopper
 
         private void ExecuteMoveJRun(int runId, URSession session, List<double[]> waypoints, double speed, double accel)
         {
+            session.PushStreamSendSuppress();
+            try
+            {
+                ExecuteMoveJRunCore(runId, session, waypoints, speed, accel);
+            }
+            finally
+            {
+                session.PopStreamSendSuppress();
+            }
+        }
+
+        private void ExecuteMoveJRunCore(int runId, URSession session, List<double[]> waypoints, double speed, double accel)
+        {
             for (int i = 0; i < waypoints.Count; i++)
             {
                 if (!TrySetProgress(runId, i + 1)) return;
@@ -437,12 +667,31 @@ namespace UR.RTDE.Grasshopper
                     FinishRun(runId, false, $"MoveJ failed at {i + 1}/{waypoints.Count}: {error}. Target: {FormatVector(waypoints[i])}", false);
                     return;
                 }
+
+                if (!session.WaitForMotionComplete(MotionWaitTimeoutMs))
+                {
+                    FinishRun(runId, false, $"MoveJ timeout at {i + 1}/{waypoints.Count}: {session.LastError}", false);
+                    return;
+                }
             }
 
             FinishRun(runId, true, $"Completed {waypoints.Count}/{waypoints.Count}", true);
         }
 
         private void ExecuteMoveLRun(int runId, URSession session, List<double[]> poses, double speed, double accel)
+        {
+            session.PushStreamSendSuppress();
+            try
+            {
+                ExecuteMoveLRunCore(runId, session, poses, speed, accel);
+            }
+            finally
+            {
+                session.PopStreamSendSuppress();
+            }
+        }
+
+        private void ExecuteMoveLRunCore(int runId, URSession session, List<double[]> poses, double speed, double accel)
         {
             for (int i = 0; i < poses.Count; i++)
             {
@@ -463,6 +712,12 @@ namespace UR.RTDE.Grasshopper
                 {
                     var error = session.LastError ?? "Unknown error";
                     FinishRun(runId, false, $"MoveL failed at {i + 1}/{poses.Count}: {error}. Target: {FormatVector(poses[i])}", false);
+                    return;
+                }
+
+                if (!session.WaitForMotionComplete(MotionWaitTimeoutMs))
+                {
+                    FinishRun(runId, false, $"MoveL timeout at {i + 1}/{poses.Count}: {session.LastError}", false);
                     return;
                 }
             }
@@ -739,7 +994,7 @@ namespace UR.RTDE.Grasshopper
             _autoSend = !_autoSend;
             ResetMotionTriggerState();
             if (_autoSend)
-                SetInfoState("Auto Send armed. Waiting for new input.");
+                SetInfoState("Auto Send on. Waiting for new input.");
             else
                 SetInfoState("Auto Send off. Use Run to send the current target.");
             ExpireSolution(true);
@@ -851,6 +1106,37 @@ namespace UR.RTDE.Grasshopper
                 case URActionKind.SetDO:
                     Params.RegisterInputParam(Int("Pin", "I", "Digital output pin", 0, false));
                     Params.RegisterInputParam(Bool("Value", "B", "Digital output value", false, false));
+                    break;
+
+                case URActionKind.SetAO:
+                    Params.RegisterInputParam(Int("Index", "I", "Analog output index", 0, false));
+                    Params.RegisterInputParam(Num("Value", "V", "Analog output value", GH_ParamAccess.item, 0.0, false));
+                    Params.RegisterInputParam(Bool("Current", "C", "True = current mode, false = voltage", false, true));
+                    break;
+
+                case URActionKind.SetToolDO:
+                    Params.RegisterInputParam(Int("Pin", "I", "Tool digital output pin", 0, false));
+                    Params.RegisterInputParam(Bool("Value", "B", "Tool digital output value", false, false));
+                    break;
+
+                case URActionKind.SetTCP:
+                    var tcpPose = Num("Pose", "P", "TCP pose [x,y,z,rx,ry,rz] (m,rad)", GH_ParamAccess.list);
+                    tcpPose.Optional = true;
+                    Params.RegisterInputParam(tcpPose);
+                    Params.RegisterInputParam(new Param_Plane { Name = "Target", NickName = "T", Description = "TCP Plane (alternative to Pose)", Optional = true });
+                    break;
+
+                case URActionKind.SetPayload:
+                    Params.RegisterInputParam(Num("Mass", "M", "Payload mass (kg)", GH_ParamAccess.item, 1.0, false));
+                    Params.RegisterInputParam(new Param_Point { Name = "CoG", NickName = "C", Description = "Center of gravity (document units)", Optional = true });
+                    break;
+
+                case URActionKind.SpeedStop:
+                    Params.RegisterInputParam(Num("Acceleration", "A", "Speed stop deceleration", GH_ParamAccess.item, 10.0, true));
+                    break;
+
+                case URActionKind.ServoStop:
+                    Params.RegisterInputParam(Num("Acceleration", "A", "Servo stop deceleration", GH_ParamAccess.item, 0.5, true));
                     break;
             }
 
@@ -1035,56 +1321,31 @@ namespace UR.RTDE.Grasshopper
             if (CommandComponent.IsMotionAction() && !_runButtonBounds.IsEmpty)
             {
                 var isAutoSend = CommandComponent.IsAutoSendEnabled();
-                var runBg = isAutoSend
-                    ? Color.FromArgb(245, 158, 11)
-                    : Color.FromArgb(16, 185, 129);
-                if (_runMouseDown) runBg = Darken(runBg, 0.2);
-                else if (_runMouseOver) runBg = Color.FromArgb(
-                    Math.Min(255, runBg.R + 20),
-                    Math.Min(255, runBg.G + 20),
-                    Math.Min(255, runBg.B + 20));
-
-                var cornerRadius = (int)Math.Max(2, Math.Round(8f / scale));
-                using (var path = RoundedRect(_runButtonBounds, cornerRadius))
-                {
-                    graphics.FillPath(new SolidBrush(runBg), path);
-                    graphics.DrawPath(new Pen(Darken(runBg, 0.4), 1.2f), path);
-                }
+                var runBg = isAutoSend ? ComponentUiColors.Warning : ComponentUiColors.Active;
+                GrasshopperUiDraw.DrawRoundedButton(graphics, _runButtonBounds, scale, runBg, _runMouseDown, _runMouseOver);
 
                 var buttonFont = new Font(GH_FontServer.Standard.FontFamily, GH_FontServer.Standard.Size / scale, FontStyle.Bold);
-                graphics.DrawString(isAutoSend ? "AUTO-SENT" : "RUN", buttonFont, Brushes.White, _runButtonBounds, GH_TextRenderingConstants.CenterCenter);
+                graphics.DrawString(isAutoSend ? ComponentButtonLabels.AutoSend : ComponentButtonLabels.Run, buttonFont, Brushes.White, _runButtonBounds, GH_TextRenderingConstants.CenterCenter);
                 buttonFont.Dispose();
             }
 
             if (CommandComponent._action == URActionKind.Stop && !_stopButtonBounds.IsEmpty)
             {
-                var stopBg = Color.FromArgb(239, 68, 68);
-                if (_stopMouseDown) stopBg = Darken(stopBg, 0.2);
-                else if (_stopMouseOver) stopBg = Color.FromArgb(
-                    Math.Min(255, stopBg.R + 20),
-                    Math.Min(255, stopBg.G + 20),
-                    Math.Min(255, stopBg.B + 20));
-
-                var cornerRadius = (int)Math.Max(2, Math.Round(8f / scale));
-                using (var path = RoundedRect(_stopButtonBounds, cornerRadius))
-                {
-                    graphics.FillPath(new SolidBrush(stopBg), path);
-                    graphics.DrawPath(new Pen(Darken(stopBg, 0.4), 1.2f), path);
-                }
+                GrasshopperUiDraw.DrawRoundedButton(graphics, _stopButtonBounds, scale, ComponentUiColors.Danger, _stopMouseDown, _stopMouseOver);
 
                 var buttonFont = new Font(GH_FontServer.Standard.FontFamily, GH_FontServer.Standard.Size / scale, FontStyle.Bold);
-                graphics.DrawString("STOP", buttonFont, Brushes.White, _stopButtonBounds, GH_TextRenderingConstants.CenterCenter);
+                graphics.DrawString(ComponentButtonLabels.Stop, buttonFont, Brushes.White, _stopButtonBounds, GH_TextRenderingConstants.CenterCenter);
                 buttonFont.Dispose();
             }
 
             // Draw dropdown (below stop button if in Stop mode, otherwise at the top)
             var cornerRadiusDropdown = (int)Math.Max(2, Math.Round(8f / scale));
-            var dropdownBg = _dropdownHover ? Color.FromArgb(180, 180, 180) : Color.LightGray;
+            var dropdownBg = _dropdownHover ? ComponentUiColors.DropdownHover : ComponentUiColors.Dropdown;
             
-            using (var path = RoundedRect(_dropdownBounds, cornerRadiusDropdown))
+            using (var path = GrasshopperUiDraw.RoundedRect(_dropdownBounds, cornerRadiusDropdown))
             {
                 graphics.FillPath(new SolidBrush(dropdownBg), path);
-                graphics.DrawPath(new Pen(Darken(dropdownBg, 0.3), 1.2f), path);
+                graphics.DrawPath(new Pen(GrasshopperUiDraw.Darken(dropdownBg, 0.3), 1.2f), path);
             }
 
             // Text centered in the dropdown (excluding arrow area)
@@ -1105,12 +1366,12 @@ namespace UR.RTDE.Grasshopper
                 for (int i = 0; i < _dropdownItemBounds.Count; i++)
                 {
                     var itemBounds = _dropdownItemBounds[i];
-                    var itemBg = i == _hoverItemIndex ? Color.FromArgb(200, 200, 200) : Color.LightGray;
+                    var itemBg = i == _hoverItemIndex ? ComponentUiColors.DropdownItemHover : ComponentUiColors.Dropdown;
                     
-                    using (var itemPath = RoundedRect(itemBounds, cornerRadiusDropdown))
+                    using (var itemPath = GrasshopperUiDraw.RoundedRect(itemBounds, cornerRadiusDropdown))
                     {
                         graphics.FillPath(new SolidBrush(itemBg), itemPath);
-                        graphics.DrawPath(new Pen(Color.Gray, 0.8f), itemPath);
+                        graphics.DrawPath(new Pen(ComponentUiColors.DropdownItemBorder, 0.8f), itemPath);
                     }
                     
                     graphics.DrawString(UR_WriteComponent.ActionModes[i], font, Brushes.Black, itemBounds, GH_TextRenderingConstants.CenterCenter);
@@ -1131,31 +1392,6 @@ namespace UR.RTDE.Grasshopper
                     new PointF(center.X + 4, center.Y - 2)
                 });
             }
-        }
-
-        private static Color Darken(Color c, double amount)
-        {
-            amount = Math.Max(0, Math.Min(1, amount));
-            return Color.FromArgb(c.A, (int)(c.R * (1 - amount)), (int)(c.G * (1 - amount)), (int)(c.B * (1 - amount)));
-        }
-
-        private static GraphicsPath RoundedRect(RectangleF bounds, int radius)
-        {
-            var path = new GraphicsPath();
-            int diameter = radius * 2;
-            var arc = new RectangleF(bounds.Location, new SizeF(diameter, diameter));
-
-            if (radius == 0) { path.AddRectangle(bounds); return path; }
-
-            path.AddArc(arc, 180, 90);
-            arc.X = bounds.Right - diameter;
-            path.AddArc(arc, 270, 90);
-            arc.Y = bounds.Bottom - diameter;
-            path.AddArc(arc, 0, 90);
-            arc.X = bounds.Left;
-            path.AddArc(arc, 90, 90);
-            path.CloseFigure();
-            return path;
         }
 
         public override GH_ObjectResponse RespondToMouseDown(GH_Canvas sender, GH_CanvasMouseEvent e)

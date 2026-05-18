@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  build-and-test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Build plugin (Release)
+        run: |
+          dotnet build UR.RTDE.Grasshopper.csproj -c Release -f net48 -p:BuildYakPackage=false
+          dotnet build UR.RTDE.Grasshopper.csproj -c Release -f net8.0-windows -p:BuildYakPackage=false
+
+      - name: Build and run unit tests
+        shell: pwsh
+        run: |
+          dotnet build UR.RTDE.Grasshopper.csproj -c Test -f net48 -p:BuildYakPackage=false
+          dotnet build UR.RTDE.Grasshopper.Tests/UR.RTDE.Grasshopper.Tests.csproj -p:BuildYakPackage=false
+          Copy-Item "bin/Test/net48/UR.RTDE.Grasshopper.dll" `
+            -Destination "UR.RTDE.Grasshopper.Tests/bin/Debug/net48/" -Force
+          dotnet test UR.RTDE.Grasshopper.Tests/UR.RTDE.Grasshopper.Tests.csproj `
+            --no-build --filter "Category!=Integration" --verbosity normal

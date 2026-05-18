@@ -1,0 +1,15 @@
+<Project>
+  <!--
+    Copy to Directory.Build.props.user (gitignored) for machine-specific overrides.
+    MSBuild imports Directory.Build.props.user automatically when present.
+  -->
+  <PropertyGroup>
+    <!-- macOS: path to Rhino 8.app (also overridable via RHINO_MAC_APP env var) -->
+    <!-- <RhinoMacApp>/Applications/Rhino 8.app</RhinoMacApp> -->
+    <!-- VS Code/Cursor: rhino.mac.app in .vscode/settings.json -->
+    <!-- Rider: edit Properties/launchSettings.json profile "Rhino 8 Mac - Debug" executablePath, or set RhinoMacApp here -->
+
+    <!-- Optional: explicit yak binary when not under RhinoMacApp -->
+    <!-- <YakMacPath>/path/to/yak</YakMacPath> -->
+  </PropertyGroup>
+</Project>
