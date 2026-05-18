@@ -2,6 +2,19 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.6.3.3] - 2026-05-18
+
+### Fixed
+- Windows RTDE connect failed when natives were only under `runtimes/win-x64/native/`; added Windows native preload and `DllImport` resolver in `NativeBootstrap` (same pattern as macOS).
+- Yak packages now include flat Windows DLLs and macOS dylib beside the `.gha`, not only under `runtimes/`.
+
+### Changed
+- `tools/package-yak.sh` copies flat natives and verifies required files before packaging.
+
+### Compatibility
+- No breaking API or component GUID changes.
+- `UR.RTDE` NuGet dependency remains `1.6.3.9`.
+
 ## [1.6.3.2] - 2026-05-18
 
 ### Changed

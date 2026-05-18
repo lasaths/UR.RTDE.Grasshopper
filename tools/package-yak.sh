@@ -31,6 +31,12 @@ rm -rf "$STAGE"
 mkdir -p "$STAGE"
 cp "$OUT_DIR/UR.RTDE.Grasshopper.gha" "$STAGE/"
 cp "$OUT_DIR/UR.RTDE.dll" "$STAGE/"
+# Flat natives beside the GHA (Rhino P/Invoke probes the plugin folder, not runtimes/ only).
+for pattern in ur_rtde_c_api.dll rtde.dll boost_thread-*.dll libur_rtde_c_api.dylib; do
+  for f in "$OUT_DIR"/$pattern; do
+    [[ -f "$f" ]] && cp "$f" "$STAGE/"
+  done
+done
 [[ -d "$OUT_DIR/runtimes" ]] && cp -R "$OUT_DIR/runtimes" "$STAGE/"
 cp "$ROOT/Resources/Icons/robot-duotone.png" "$STAGE/icon.png"
 
@@ -57,6 +63,32 @@ cd "$STAGE"
 rm -f "$OUT_DIR"/*.yak
 "$YAK" build
 PKG="$(ls -1 ur-rtde-grasshopper-"${VERSION}"-rh8_0-any.yak)"
+
+verify_yak() {
+  local yak_file="$1"
+  local missing=0
+  local listing
+  listing="$(unzip -Z1 "$yak_file")"
+  for required in \
+    UR.RTDE.Grasshopper.gha \
+    UR.RTDE.dll \
+    ur_rtde_c_api.dll \
+    rtde.dll \
+    libur_rtde_c_api.dylib \
+    runtimes/win-x64/native/ur_rtde_c_api.dll \
+    runtimes/osx-arm64/native/libur_rtde_c_api.dylib; do
+    if ! printf '%s\n' "$listing" | grep -qxF "$required"; then
+      echo "ERROR: $yak_file missing: $required" >&2
+      missing=1
+    fi
+  done
+  return "$missing"
+}
+
+if ! verify_yak "$PKG"; then
+  exit 1
+fi
+echo "Verified $PKG"
 cp "$PKG" "${PKG/rh8_0/rh7_0}"
 cp "$PKG" "$OUT_DIR/"
 cp "${PKG/rh8_0/rh7_0}" "$OUT_DIR/"
