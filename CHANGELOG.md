@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.6.3.2] - 2026-05-18
+
+### Changed
+- Bumped plugin version to `1.6.3.2` so Yak, git tags, and GitHub releases match (1.6.3.1 was published to Yak without a matching `v1.6.3.1` tag or GitHub release).
+
+### Compatibility
+- No breaking API or component GUID changes.
+- `UR.RTDE` NuGet dependency remains `1.6.3.9`.
+
 ## [1.6.3.1] - 2026-05-16
 
 ### Added

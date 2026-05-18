@@ -1,7 +1,7 @@
 # UR.RTDE.Grasshopper
 
 [![Yak Package](https://img.shields.io/badge/yak-UR--RTDE--Grasshopper-blue)](https://yak.rhino3d.com/packages/UR-RTDE-Grasshopper)
-[![Version](https://img.shields.io/badge/version-1.6.3.1-blue)](https://yak.rhino3d.com/packages/UR-RTDE-Grasshopper)
+[![Version](https://img.shields.io/badge/version-1.6.3.2-blue)](https://yak.rhino3d.com/packages/UR-RTDE-Grasshopper)
 [![Rhino](https://img.shields.io/badge/Rhino-7%20%26%208-green)](https://www.rhino3d.com/)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
