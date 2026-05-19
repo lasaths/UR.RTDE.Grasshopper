@@ -5,7 +5,7 @@ This document provides information for AI agents and automated systems working w
 ## Project Overview
 
 **Name**: UR.RTDE.Grasshopper  
-**Version**: 1.6.3.2  
+**Version**: 1.6.3.4  
 **Type**: Grasshopper plugin for Rhino  
 **Purpose**: Control Universal Robots via RTDE (Real-Time Data Exchange) protocol from Grasshopper, including Robotiq grippers (URCap)  
 **Language**: C# (.NET)  
@@ -30,7 +30,8 @@ UR.RTDE.Grasshopper/
 ├── Utils/               # Utility functions
 │   ├── PoseUtils.cs                 # Pose conversion utilities
 │   ├── GrasshopperUiDraw.cs         # Shared UI drawing helpers for attributes
-│   └── NativeBootstrap.cs           # macOS dlopen preload (RTLD_LOCAL) for UR.RTDE dylibs
+│   └── NativeBootstrap.cs           # macOS + Windows native preload before RTDE P/Invoke
+├── UR_PluginPriority.cs             # GH_AssemblyPriority: bootstrap at Grasshopper load
 ├── Resources/
 │   └── Icons/                       # Component icons (PNG files)
 ├── UR.RTDE.Grasshopper.csproj       # Main project file
@@ -235,9 +236,24 @@ dotnet build -c Release -f net8.0
 
 ### Custom Build Targets
 - `CopyYakIcon`: Automatically copies icon to build output
-- `BuildYakPackage`: Generates yak package after build (uses net48 output)
-- `CopyURRTDEDependencies`: Copies native DLLs to output
+- `BuildYakPackage`: Optional MSBuild yak step (flat net48 folder only). **Releases use `tools/package-yak.sh` instead** — see **Yak Package**.
+- `CopyURRTDEDependencies`: Copies native DLLs to output (flat beside `.gha` + `runtimes/**`)
 - `CopyToGrasshopperLibraries`: Auto-deploys to Grasshopper Libraries folder
+
+### Cross-platform native loading (Windows + macOS)
+
+Rhino 8 on Windows runs Grasshopper plugins on **.NET 8 (CoreCLR)**. A **net48-only** Yak package does not include the `NativeLibrary` / `DllImportResolver` path compiled for `net8.0-windows`, so RTDE P/Invoke can fail with `BaseDir: C:\Program Files\Rhino 8\System\netcore` even when natives exist under `runtimes/win-x64/native/`.
+
+**Bootstrap chain (do not remove):**
+1. `UR_PluginPriority` (`GH_AssemblyPriority.PriorityLoad`) — runs before any component loads.
+2. `URSession.EnsurePluginInitialized()` — `AssemblyResolve` for `UR.RTDE.dll` from the plugin folder, then `NativeBootstrap.EnsureLoaded()`.
+3. `NativeBootstrap` — macOS: `MacOsNativeLibraryBootstrap` (UR.RTDE); Windows: `LoadLibrary` + dependency preload + `AddDllDirectory`, and on **net5+ builds** `NativeLibrary.Load` + `SetDllImportResolver` for `ur_rtde_c_api`.
+
+**Native files required beside each `.gha` (and under `runtimes/`):**
+- Windows: `ur_rtde_c_api.dll`, `rtde.dll`, `boost_thread-vc143-mt-x64-1_89.dll` (and/or vc145)
+- macOS: `libur_rtde_c_api.dylib` (prefer `osx-arm64`; `osx-x64` fallback)
+
+**Windows troubleshooting:** If load still fails after a correct Yak install, install the [VC++ 2015–2022 x64 redistributable](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist).
 
 ## Testing
 
@@ -362,15 +378,16 @@ if (session == null || !session.IsConnected)
 ## Version Management
 
 ### Current Version
-- **Version**: 1.6.3.2 (in `.csproj`)
+- **Version**: 1.6.3.4 (in `.csproj`)
 - **Yak Package**: Available on `yak.rhino3d.com`
 
 ### Version Bump Process
-1. Update `<Version>` in `.csproj`
-2. Rebuild release packages
-3. Create git tag: `git tag -a v<version> -m "Release <version>"`
-4. Push tag: `git push origin v<version>`
-5. Update yak manifest and push
+1. Update `<Version>` in `.csproj` and `CHANGELOG.md`
+2. `dotnet build UR.RTDE.Grasshopper.csproj -c Release -p:BuildYakPackage=false`
+3. `bash tools/package-yak.sh` (multi-target Yak; verifies native files)
+4. Test on **Windows and Mac** (Package Manager or manual copy of full output folder)
+5. `yak push` test server, then production (`rh8_0-any` + `rh7_0-any`)
+6. Git tag: `git tag -a v<version> -m "Release <version>"` and push; create GitHub release with `.yak` artifacts
 
 ## Yak Package
 
@@ -378,39 +395,51 @@ if (session == null || !session.IsConnected)
 - **Yak Name**: `UR-RTDE-Grasshopper` (dashes, no dots)
 - **Package ID**: `UR.RTDE.Grasshopper` (with dots, for internal use)
 
-### Manifest Location
-- **Generated**: `bin/Release/net48/manifest.yml` (changed from net8.0-windows)
-- **Auto-generated**: Yes, by `yak spec` command
-- **Manual Updates**: Keywords and icon need to be added manually
+### Multi-target layout (required for Rhino 8 Win + Mac)
 
-### Manifest Requirements
-- Package name: Only letters, numbers, dashes, underscores (no dots)
-- Keywords: Only letters, numbers, dashes, underscores (no spaces)
-- Icon: Must be in build output directory
+Use **`tools/package-yak.sh`** as the only release packaging path (`-p:BuildYakPackage=false` on `dotnet build`). Do not ship a single flat net48 folder for Rhino 8 — Rhino picks the framework subfolder at load time ([McNeel multi-target guide](https://developer.rhino3d.com/en/guides/yak/creating-a-multi-targeted-rhino-plugin-package)).
+
+```
+ur-rtde-grasshopper-<version>-rh8_0-any.yak
+├── manifest.yml
+├── icon.png
+├── net48/              # Rhino 7
+│   ├── UR.RTDE.Grasshopper.gha
+│   ├── UR.RTDE.dll
+│   ├── ur_rtde_c_api.dll, rtde.dll, boost_thread-*.dll
+│   ├── libur_rtde_c_api.dylib
+│   └── runtimes/...
+├── net8.0-windows/     # Rhino 8 Windows (CoreCLR + DllImport resolver)
+│   └── (same native layout as net48)
+└── net8.0/             # Rhino 8 Mac
+    └── (same native layout; macOS uses dylib)
+```
+
+`package-yak.sh` copies flat natives + `runtimes/` into each framework folder and **fails the build** if required entries are missing from the `.yak` zip.
+
+### Manifest
+- Written by `package-yak.sh` into `bin/Release/yak-staging/manifest.yml` (`name: UR-RTDE-Grasshopper`, `guid:` in keywords)
+- Package name: letters, numbers, dashes, underscores only (no dots)
 
 ### Publishing
 ```bash
-# Build and package
-dotnet build -c Release
+dotnet build UR.RTDE.Grasshopper.csproj -c Release -p:BuildYakPackage=false
+bash tools/package-yak.sh
 
-# Generate manifest (in net48 output)
-cd bin/Release/net48
-yak spec
+# Test server first
+yak push --source https://test.yak.rhino3d.com \
+  bin/Release/net48/ur-rtde-grasshopper-<version>-rh8_0-any.yak
+yak push --source https://test.yak.rhino3d.com \
+  bin/Release/net48/ur-rtde-grasshopper-<version>-rh7_0-any.yak
 
-# Edit manifest.yml (add keywords, icon)
-# Then build yak package
-yak build
-
-# Push to test server
-yak push --source https://test.yak.rhino3d.com ur-rtde-grasshopper-<version>-rh8_0-any.yak
-
-# Push to production
-yak push ur-rtde-grasshopper-<version>-rh8_0-any.yak
-
-### Rhino 7 publishing
-- After the Rhino 8 package is ready, duplicate `bin/Release/net48/manifest.yml`, set `rhino version: rh7_0` (and keep the existing `icon`, `keywords`, and `guid`) and rebuild or repackage into `ur-rtde-grasshopper-<version>-rh7_0-any.yak`.  
-- Push the Rhino 7 artifact with `yak push ur-rtde-grasshopper-<version>-rh7_0-any.yak` so both server entries (rh8_0 and rh7_0) exist for each release.  
+# Production (after Win + Mac smoke test)
+yak push bin/Release/net48/ur-rtde-grasshopper-<version>-rh8_0-any.yak
+yak push bin/Release/net48/ur-rtde-grasshopper-<version>-rh7_0-any.yak
 ```
+
+`rh7_0-any` is produced by renaming the `rh8_0-any` artifact (same net48 payload) — see script output.
+
+**Yak CLI paths:** Windows `C:\Program Files\Rhino 8\System\Yak.exe`; macOS `/Applications/Rhino 8.app/Contents/Resources/bin/yak` or `tools/yak` from `tools/install-yak.sh`.
 
 ## Important Notes
 
@@ -466,15 +495,15 @@ When making changes:
 1. Build all target frameworks
 2. Test in Rhino 7 (net48)
 3. Test in Rhino 8 (net8.0-windows)
-4. Verify yak package builds correctly
-5. Test installation via yak
+4. Verify yak package via `bash tools/package-yak.sh` (multi-target + native verify)
+5. Test Yak install on **Windows and Mac** Rhino 8 before production push
 6. Test with URSim (never skip; `docker/ursim` in UR.RTDE repo, both ports 30003+30004)
 7. Check all component icons display
 8. Verify context menus work
 9. Test auto-listen at several intervals
 10. Verify UI responsiveness during auto-listen and motion
-12. Verify all read/command modes work
-13. Verify Robotiq gripper actions on URCap: activate/open/close/move across Native (63352), RTDE bridge (with install), URScript (30002)
+11. Verify all read/command modes work
+12. Verify Robotiq gripper actions on URCap: activate/open/close/move across Native (63352), RTDE bridge (with install), URScript (30002)
 
 ## Resources
 
