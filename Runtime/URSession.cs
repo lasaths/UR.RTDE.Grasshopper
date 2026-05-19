@@ -39,9 +39,16 @@ namespace UR.RTDE.Grasshopper
         private RTDEIO _io;
         private volatile bool _isConnected;
         private int _streamSendSuppressCount;
+        private int _streamingMotionKind;
+
+        private const int StreamKindNone = 0;
+        private const int StreamKindSpeedJ = 1;
+        private const int StreamKindServoJ = 2;
+        private const int RuntimeStatePlaying = 2;
 
         public string Ip { get; }
         public bool IsStreamSendSuppressed => Volatile.Read(ref _streamSendSuppressCount) > 0;
+        public bool IsStreamingMotionActive => Volatile.Read(ref _streamingMotionKind) != StreamKindNone;
         public bool IsConnected => _isConnected;
         public string LastError { get; private set; }
 
@@ -67,6 +74,16 @@ namespace UR.RTDE.Grasshopper
         {
             if (Interlocked.Decrement(ref _streamSendSuppressCount) < 0)
                 Interlocked.Exchange(ref _streamSendSuppressCount, 0);
+        }
+
+        /// <summary>
+        /// Pause UR Stream sends and stop any active SpeedJ/ServoJ before MoveJ/MoveL.
+        /// </summary>
+        public void PrepareForPathMotion()
+        {
+            PushStreamSendSuppress();
+            lock (_lockObj)
+                EndStreamingMotionBeforePathMove();
         }
 
         public bool Connect(int timeoutMs = 2000)
@@ -371,10 +388,81 @@ namespace UR.RTDE.Grasshopper
             }
         }
 
+        /// <summary>
+        /// True when safety/robot mode needs teach-pendant intervention before RTDE can be used again.
+        /// </summary>
+        internal static bool TryGetOperatorRecoveryFault(int safetyMode, int robotMode, out string reason)
+        {
+            if (safetyMode is not 1 and not 2)
+            {
+                reason =
+                    $"Robot safety mode: {DescribeSafetyMode(safetyMode)} ({safetyMode}). "
+                    + "Clear the stop and enable the robot on the teach pendant, then Connect again.";
+                return true;
+            }
+
+            if (robotMode is 1 or 3)
+            {
+                reason =
+                    $"Robot mode: {DescribeRobotMode(robotMode)} ({robotMode}). "
+                    + "Power on and enable the robot on the teach pendant, then Connect again.";
+                return true;
+            }
+
+            reason = null;
+            return false;
+        }
+
+        /// <summary>
+        /// Polls RTDE for e-stop, protective stop, power-off, etc. Returns true when the session should drop.
+        /// </summary>
+        public bool CheckOperatorRecoveryRequired(out string reason)
+        {
+            lock (_lockObj)
+            {
+                if (!_isConnected || _receive == null)
+                {
+                    reason = null;
+                    return false;
+                }
+
+                try
+                {
+                    var safety = GetSafetyMode();
+                    var robot = GetRobotMode();
+                    return TryGetOperatorRecoveryFault(safety, robot, out reason);
+                }
+                catch (Exception ex)
+                {
+                    reason = "RTDE receive failed: " + (ex.InnerException?.Message ?? ex.Message)
+                             + ". Connect again after the robot is ready.";
+                    return true;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Drops the RTDE connection and records <paramref name="reason"/> in <see cref="LastError"/>.
+        /// </summary>
+        public void ForceDisconnect(string reason)
+        {
+            lock (_lockObj)
+            {
+                if (!string.IsNullOrWhiteSpace(reason))
+                    LastError = reason;
+                if (!_isConnected)
+                    return;
+                DisposeClientsInternal();
+            }
+        }
+
         public bool IsProgramRunning()
         {
             lock (_lockObj)
             {
+                if (_control != null)
+                    return _control.IsProgramRunning;
+
                 RequireReceive();
                 try
                 {
@@ -382,7 +470,7 @@ namespace UR.RTDE.Grasshopper
                 }
                 catch (MissingMethodException)
                 {
-                    return InvokeReceive<int>(new[] { "GetRuntimeState" }) != 0;
+                    return InvokeReceive<int>(new[] { "GetRuntimeState" }) == RuntimeStatePlaying;
                 }
             }
         }
@@ -488,7 +576,10 @@ namespace UR.RTDE.Grasshopper
             lock (_lockObj)
             {
                 if (_control == null) throw new InvalidOperationException("Not connected");
-                return InvokeControlVoid("SpeedJ", new object[] { qd, acceleration, time });
+                if (!InvokeControlVoid("SpeedJ", new object[] { qd, acceleration, time }))
+                    return false;
+                Volatile.Write(ref _streamingMotionKind, StreamKindSpeedJ);
+                return true;
             }
         }
 
@@ -498,7 +589,10 @@ namespace UR.RTDE.Grasshopper
             lock (_lockObj)
             {
                 if (_control == null) throw new InvalidOperationException("Not connected");
-                return InvokeControlVoid("ServoJ", new object[] { q, speed, acceleration, time, lookaheadTime, gain });
+                if (!InvokeControlVoid("ServoJ", new object[] { q, speed, acceleration, time, lookaheadTime, gain }))
+                    return false;
+                Volatile.Write(ref _streamingMotionKind, StreamKindServoJ);
+                return true;
             }
         }
 
@@ -507,7 +601,11 @@ namespace UR.RTDE.Grasshopper
             lock (_lockObj)
             {
                 if (_control == null) throw new InvalidOperationException("Not connected");
-                return InvokeControlVoid("SpeedStop", new object[] { acceleration });
+                if (!InvokeControlVoid("SpeedStop", new object[] { acceleration }))
+                    return false;
+                if (Volatile.Read(ref _streamingMotionKind) == StreamKindSpeedJ)
+                    Volatile.Write(ref _streamingMotionKind, StreamKindNone);
+                return true;
             }
         }
 
@@ -516,7 +614,11 @@ namespace UR.RTDE.Grasshopper
             lock (_lockObj)
             {
                 if (_control == null) throw new InvalidOperationException("Not connected");
-                return InvokeControlVoid("ServoStop", new object[] { acceleration });
+                if (!InvokeControlVoid("ServoStop", new object[] { acceleration }))
+                    return false;
+                if (Volatile.Read(ref _streamingMotionKind) == StreamKindServoJ)
+                    Volatile.Write(ref _streamingMotionKind, StreamKindNone);
+                return true;
             }
         }
 
@@ -925,15 +1027,17 @@ namespace UR.RTDE.Grasshopper
                 var safety = GetSafetyMode();
                 parts.Add($"safety {safety} ({DescribeSafetyMode(safety)})");
                 if (IsProgramRunning())
-                    parts.Add("PolyScope program is playing — stop it before RTDE MoveJ/MoveL");
+                    parts.Add("a URScript is running on the robot — stop any PolyScope program before RTDE MoveJ/MoveL");
                 if (safety != 1)
                     parts.Add("clear protective/safeguard stop on the teach pendant");
                 if (robotMode is 3 or 4)
                     parts.Add("power on the robot and release brakes");
                 if (robotMode is 0 or 2)
                     parts.Add("wait until the robot finishes booting");
-                parts.Add("enable Remote Control on the pendant, or run External Control URCap (port 50002) on URSim");
-                parts.Add("turn UR Stream off (Stop) — ServoJ blocks MoveJ until streaming ends");
+                if (IsStreamingMotionActive || IsStreamSendSuppressed)
+                    parts.Add("turn UR Stream off (Go Live off or Servo Stop) — ServoJ/SpeedJ block MoveJ until streaming ends");
+                else
+                    parts.Add("on URSim enable Remote Control and start External Control (port 50002) if MoveJ/MoveL still fail");
                 return string.Join("; ", parts);
             }
             catch (Exception ex)
@@ -942,7 +1046,7 @@ namespace UR.RTDE.Grasshopper
             }
         }
 
-        private static string DescribeRobotMode(int mode) => mode switch
+        internal static string DescribeRobotMode(int mode) => mode switch
         {
             0 => "Disconnected",
             1 => "ConfirmSafety",
@@ -956,7 +1060,7 @@ namespace UR.RTDE.Grasshopper
             _ => "Unknown"
         };
 
-        private static string DescribeSafetyMode(int mode) => mode switch
+        internal static string DescribeSafetyMode(int mode) => mode switch
         {
             1 => "Normal",
             2 => "Reduced",
@@ -989,6 +1093,7 @@ namespace UR.RTDE.Grasshopper
             var previousError = LastError;
             TryInvokeControlVoid("ServoStop", new object[] { 0.5 });
             TryInvokeControlVoid("SpeedStop", new object[] { 10.0 });
+            Volatile.Write(ref _streamingMotionKind, StreamKindNone);
             LastError = previousError;
         }
 

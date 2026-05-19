@@ -5,6 +5,7 @@ using Grasshopper.GUI;
 using Grasshopper.GUI.Canvas;
 using System.Drawing;
 using Grasshopper.Kernel.Attributes;
+using Rhino;
 using Rhino.Geometry;
 using Rhino.Display;
 
@@ -14,10 +15,14 @@ namespace UR.RTDE.Grasshopper
     {
         private readonly object _sessionLock = new object();
         private int _connectBusy;
+        private System.Threading.Timer _healthTimer;
+        private int _healthCheckInFlight;
+        private const int HealthCheckIntervalMs = 250;
 
         internal URSession _session;
         internal string _currentIp = string.Empty;
         internal int _lastTimeoutMs = 2000;
+        internal bool AwaitingReconnect { get; private set; }
 
         public UR_SessionComponent()
           : base("UR Session", "URSession",
@@ -64,20 +69,30 @@ namespace UR.RTDE.Grasshopper
                     _session?.Dispose();
                     _session = new URSession(ip);
                     _currentIp = ip ?? string.Empty;
+                    AwaitingReconnect = false;
                     createdOrReconnected = true;
                 }
+
+                if (_session != null && _session.IsConnected)
+                    EnforceOperatorRecoveryIfNeeded();
 
                 bool isConnected = _session?.IsConnected ?? false;
                 string status = createdOrReconnected ? "Session created" : "Session reused";
                 if (!isConnected)
                 {
-                    status += " (not connected)";
+                    var lastError = _session?.LastError ?? string.Empty;
+                    status = string.IsNullOrWhiteSpace(lastError)
+                        ? status + " (not connected)"
+                        : "Disconnected — " + lastError;
                 }
 
                 da.SetData(0, _session != null ? new URSessionGoo(_session) : null);
                 da.SetData(1, isConnected);
                 da.SetData(2, status);
                 da.SetData(3, _session?.LastError ?? string.Empty);
+
+                if (!isConnected && !string.IsNullOrWhiteSpace(_session?.LastError))
+                    AddRuntimeMessage(GH_RuntimeMessageLevel.Error, _session.LastError);
             }
         }
 
@@ -106,6 +121,7 @@ namespace UR.RTDE.Grasshopper
         public override void RemovedFromDocument(GH_Document document)
         {
             base.RemovedFromDocument(document);
+            StopHealthMonitor();
             lock (_sessionLock)
             {
                 _session?.Dispose();
@@ -161,6 +177,8 @@ namespace UR.RTDE.Grasshopper
                 var disconnect = _session?.IsConnected ?? false;
                 if (disconnect)
                 {
+                    StopHealthMonitor();
+                    AwaitingReconnect = false;
                     _session?.Dispose();
                     _session = null;
                     return ConnectToggleResult.Success();
@@ -171,11 +189,88 @@ namespace UR.RTDE.Grasshopper
 
                 _session ??= new URSession(ip);
                 if (_session.Connect(timeoutMs))
+                {
+                    AwaitingReconnect = false;
+                    StartHealthMonitor();
                     return ConnectToggleResult.Success();
+                }
 
                 var message = string.IsNullOrWhiteSpace(_session.LastError) ? "Failed to connect" : _session.LastError;
                 return ConnectToggleResult.Failure(message);
             }
+        }
+
+        private void StartHealthMonitor()
+        {
+            StopHealthMonitor();
+            _healthTimer = new System.Threading.Timer(_ => OnHealthTimerTick(), null, HealthCheckIntervalMs, HealthCheckIntervalMs);
+        }
+
+        private void StopHealthMonitor()
+        {
+            _healthTimer?.Dispose();
+            _healthTimer = null;
+        }
+
+        private void OnHealthTimerTick()
+        {
+            if (Interlocked.Exchange(ref _healthCheckInFlight, 1) == 1)
+                return;
+
+            try
+            {
+                string reason = null;
+                var shouldDisconnect = false;
+
+                lock (_sessionLock)
+                {
+                    if (_session != null && _session.IsConnected && _session.CheckOperatorRecoveryRequired(out reason))
+                        shouldDisconnect = true;
+                }
+
+                if (!shouldDisconnect)
+                    return;
+
+                DisconnectForOperatorRecovery(reason);
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _healthCheckInFlight, 0);
+            }
+        }
+
+        private void EnforceOperatorRecoveryIfNeeded()
+        {
+            if (_session == null || !_session.IsConnected)
+                return;
+
+            if (!_session.CheckOperatorRecoveryRequired(out var reason))
+                return;
+
+            DisconnectForOperatorRecovery(reason);
+        }
+
+        private void DisconnectForOperatorRecovery(string reason)
+        {
+            lock (_sessionLock)
+            {
+                if (_session == null || !_session.IsConnected)
+                    return;
+                _session.ForceDisconnect(reason);
+                AwaitingReconnect = true;
+            }
+
+            StopHealthMonitor();
+
+            RhinoApp.InvokeOnUiThread((Action)(() =>
+            {
+                if (!string.IsNullOrWhiteSpace(reason))
+                    AddRuntimeMessage(GH_RuntimeMessageLevel.Error, reason);
+                Attributes?.ExpireLayout();
+                Attributes?.PerformLayout();
+                OnDisplayExpired(true);
+                ExpireSolution(true);
+            }));
         }
 
         internal readonly struct ConnectToggleResult

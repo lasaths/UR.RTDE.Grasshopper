@@ -2,6 +2,23 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.6.3.5] - 2026-05-19
+
+### Fixed
+- `IsProgramRunning()` used `RTDEReceive` (no such API) and fell back to `GetRuntimeState() != 0`, which reported **Stopped** as running — false “PolyScope program is playing” warnings in UR Write, UR Stream, and UR Read → Modes.
+- Now uses `RTDEControl.IsProgramRunning`; runtime fallback checks state **Playing (2)** only.
+- UR Write MoveJ/MoveL calls `PrepareForPathMotion()` synchronously before the background task so UR Stream cannot send ServoJ in the same solve pass.
+- UR Read Pose output wraps `GH_Plane`; auto-listen refreshes immediately on enable.
+- RTDE control failure hints only mention streaming when SpeedJ/ServoJ is active.
+
+### Added
+- UR Session health monitor drops the connection on e-stop, protective stop, or power-off and shows a **Reconnect** button.
+- Unit tests for operator-recovery fault detection and `ForceDisconnect`.
+
+### Compatibility
+- No breaking API or component GUID changes.
+- `UR.RTDE` NuGet dependency remains `1.6.3.9`.
+
 ## [1.6.3.4] - 2026-05-19
 
 ### Fixed

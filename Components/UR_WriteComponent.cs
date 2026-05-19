@@ -506,6 +506,7 @@ namespace UR.RTDE.Grasshopper
             WriteStateOutputs(da);
             RequestRefresh();
 
+            session.PrepareForPathMotion();
             Task.Run(() => ExecuteMoveJRun(runId, session, snapshot, speed, accel));
         }
 
@@ -628,12 +629,12 @@ namespace UR.RTDE.Grasshopper
             WriteStateOutputs(da);
             RequestRefresh();
 
+            session.PrepareForPathMotion();
             Task.Run(() => ExecuteMoveLRun(runId, session, snapshot, speed, accel));
         }
 
         private void ExecuteMoveJRun(int runId, URSession session, List<double[]> waypoints, double speed, double accel)
         {
-            session.PushStreamSendSuppress();
             try
             {
                 ExecuteMoveJRunCore(runId, session, waypoints, speed, accel);
@@ -680,7 +681,6 @@ namespace UR.RTDE.Grasshopper
 
         private void ExecuteMoveLRun(int runId, URSession session, List<double[]> poses, double speed, double accel)
         {
-            session.PushStreamSendSuppress();
             try
             {
                 ExecuteMoveLRunCore(runId, session, poses, speed, accel);

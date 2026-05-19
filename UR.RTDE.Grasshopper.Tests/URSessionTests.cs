@@ -33,6 +33,44 @@ namespace UR.RTDE.Grasshopper.Tests
         }
 
         [Test]
+        public void OperatorRecoveryFault_DetectsEmergencyAndProtectiveStop()
+        {
+            Assert.That(URSession.TryGetOperatorRecoveryFault(6, 5, out var reason), Is.True);
+            Assert.That(reason, Does.Contain("SystemEmergencyStop"));
+
+            Assert.That(URSession.TryGetOperatorRecoveryFault(7, 5, out reason), Is.True);
+            Assert.That(reason, Does.Contain("RobotEmergencyStop"));
+
+            Assert.That(URSession.TryGetOperatorRecoveryFault(3, 5, out reason), Is.True);
+            Assert.That(reason, Does.Contain("ProtectiveStop"));
+        }
+
+        [Test]
+        public void OperatorRecoveryFault_AllowsNormalAndReducedSafety()
+        {
+            Assert.That(URSession.TryGetOperatorRecoveryFault(1, 5, out _), Is.False);
+            Assert.That(URSession.TryGetOperatorRecoveryFault(2, 7, out _), Is.False);
+        }
+
+        [Test]
+        public void OperatorRecoveryFault_DetectsConfirmSafetyAndPowerOff()
+        {
+            Assert.That(URSession.TryGetOperatorRecoveryFault(1, 1, out var reason), Is.True);
+            Assert.That(reason, Does.Contain("ConfirmSafety"));
+
+            Assert.That(URSession.TryGetOperatorRecoveryFault(1, 3, out reason), Is.True);
+            Assert.That(reason, Does.Contain("PowerOff"));
+        }
+
+        [Test]
+        public void ForceDisconnect_ClearsConnectedStateAndSetsLastError()
+        {
+            _session.ForceDisconnect("E-stop");
+            Assert.That(_session.IsConnected, Is.False);
+            Assert.That(_session.LastError, Is.EqualTo("E-stop"));
+        }
+
+        [Test]
         [Category("Integration")]
         public void TestConnectSetsConnectionStateConsistently()
         {

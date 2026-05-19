@@ -9,6 +9,7 @@ namespace UR.RTDE.Grasshopper
     {
         public const string Connect = "Connect";
         public const string Disconnect = "Disconnect";
+        public const string Reconnect = "Reconnect";
 
         public const string Listen = "Listen";
         public const string Listening = "Listening";

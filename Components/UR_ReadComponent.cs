@@ -30,7 +30,6 @@ namespace UR.RTDE.Grasshopper
         
         private object _lastReadData;
         private string _lastMessage = "";
-        private bool _hasNewData = false;
 
         internal static readonly string[] ReadModes =
         {
@@ -93,6 +92,8 @@ namespace UR.RTDE.Grasshopper
                 {
                     StartAutoListen();
                 }
+
+                RefreshAutoListenCache();
             }
             else
             {
@@ -103,17 +104,7 @@ namespace UR.RTDE.Grasshopper
             if (_autoListen)
             {
                 lock (_lock)
-                {
-                    if (_hasNewData)
-                    {
-                        OutputData(da, _lastReadData, _lastMessage);
-                        _hasNewData = false;
-                    }
-                    else
-                    {
-                        OutputData(da, _lastReadData, _lastMessage);
-                    }
-                }
+                    OutputData(da, _lastReadData, _lastMessage);
             }
         }
 
@@ -234,7 +225,7 @@ namespace UR.RTDE.Grasshopper
                 case URReadKind.Pose:
                 {
                     var p6 = session.GetActualTCPPose();
-                    resultData = PoseUtils.PoseToPlane(p6);
+                    resultData = new GH_Plane(PoseUtils.PoseToPlane(p6));
                     return true;
                 }
 
@@ -456,9 +447,38 @@ namespace UR.RTDE.Grasshopper
         {
             if (data is GH_Structure<IGH_Goo> tree)
                 da.SetDataTree(0, tree);
+            else if (data is IGH_Goo goo)
+                da.SetData(0, goo);
             else
                 da.SetData(0, data);
             da.SetData(1, message);
+        }
+
+        private void RefreshAutoListenCache()
+        {
+            var session = _currentSession;
+            if (session == null || !session.IsConnected)
+                return;
+
+            try
+            {
+                if (TryBuildReadResult(session, null, out var resultData, out var message))
+                {
+                    lock (_lock)
+                    {
+                        _lastReadData = resultData;
+                        _lastMessage = message;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                lock (_lock)
+                {
+                    _lastReadData = null;
+                    _lastMessage = ex.Message;
+                }
+            }
         }
 
         private void StartAutoListen()
@@ -496,7 +516,6 @@ namespace UR.RTDE.Grasshopper
                     {
                         _lastReadData = resultData;
                         _lastMessage = message;
-                        _hasNewData = true;
                     }
                 }
                 else
@@ -505,7 +524,6 @@ namespace UR.RTDE.Grasshopper
                     {
                         _lastReadData = null;
                         _lastMessage = message;
-                        _hasNewData = true;
                     }
                 }
 
@@ -521,7 +539,6 @@ namespace UR.RTDE.Grasshopper
                 {
                     _lastReadData = null;
                     _lastMessage = ex.Message;
-                    _hasNewData = true;
                 }
             }
             finally

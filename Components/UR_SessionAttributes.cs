@@ -73,9 +73,25 @@ namespace UR.RTDE.Grasshopper
             var scale = GH_GraphicsUtil.UiScale <= 0 ? 1f : GH_GraphicsUtil.UiScale;
 
             bool isConnected = _owner._session?.IsConnected ?? false;
-            string label = isConnected ? ComponentButtonLabels.Disconnect : ComponentButtonLabels.Connect;
-            
-            var bg = isConnected ? ComponentUiColors.Danger : ComponentUiColors.Active;
+            bool awaitingReconnect = !isConnected && _owner.AwaitingReconnect;
+
+            string label;
+            Color bg;
+            if (isConnected)
+            {
+                label = ComponentButtonLabels.Disconnect;
+                bg = ComponentUiColors.Danger;
+            }
+            else if (awaitingReconnect)
+            {
+                label = ComponentButtonLabels.Reconnect;
+                bg = ComponentUiColors.Warning;
+            }
+            else
+            {
+                label = ComponentButtonLabels.Connect;
+                bg = ComponentUiColors.Active;
+            }
             GrasshopperUiDraw.DrawRoundedButton(graphics, _buttonBounds, scale, bg, _mouseDown, _mouseOver);
 
             var std = GH_FontServer.Standard;
