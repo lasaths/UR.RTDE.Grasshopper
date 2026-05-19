@@ -5,7 +5,7 @@
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
     <AutoGenerateBindingRedirects>false</AutoGenerateBindingRedirects>
     <DisableImplicitFrameworkReferences>false</DisableImplicitFrameworkReferences>
-    <URRTDEVersion>1.6.3.9</URRTDEVersion>
+    <URRTDEVersion>1.6.3.10</URRTDEVersion>
   </PropertyGroup>
 
   <ItemGroup>
@@ -44,13 +44,8 @@
 
     <ItemGroup>
       <NativeDLLs Include="$(OutputPath)\runtimes\win-x64\native\*.dll" />
-      <NativeMacLibs Include="$(OutputPath)\runtimes\osx-arm64\native\libur_rtde_c_api.dylib"
-                     Condition="Exists('$(OutputPath)\runtimes\osx-arm64\native\libur_rtde_c_api.dylib')" />
-      <NativeMacLibs Include="$(OutputPath)\runtimes\osx-x64\native\libur_rtde_c_api.dylib"
-                     Condition="!Exists('$(OutputPath)\runtimes\osx-arm64\native\libur_rtde_c_api.dylib') and Exists('$(OutputPath)\runtimes\osx-x64\native\libur_rtde_c_api.dylib')" />
     </ItemGroup>
     <Copy SourceFiles="@(NativeDLLs)" DestinationFolder="$(OutputPath)" Condition="Exists('%(NativeDLLs.Identity)')" SkipUnchangedFiles="true" />
-    <Copy SourceFiles="@(NativeMacLibs)" DestinationFolder="$(OutputPath)" Condition="Exists('%(NativeMacLibs.Identity)')" SkipUnchangedFiles="true" />
     <ItemGroup>
       <MacDylibsToSign Include="$(OutputPath)*.dylib" />
       <MacDylibsToSign Include="$(OutputPath)runtimes/**/native/*.dylib" />

@@ -5,7 +5,7 @@ This document provides information for AI agents and automated systems working w
 ## Project Overview
 
 **Name**: UR.RTDE.Grasshopper  
-**Version**: 1.6.3.5  
+**Version**: 1.6.3.6  
 **Type**: Grasshopper plugin for Rhino  
 **Purpose**: Control Universal Robots via RTDE (Real-Time Data Exchange) protocol from Grasshopper, including Robotiq grippers (URCap)  
 **Language**: C# (.NET)  
@@ -174,7 +174,7 @@ Tests:
 ## Dependencies
 
 ### NuGet Packages
-- **UR.RTDE** (Version 1.6.3.9): Main dependency for RTDE communication and Robotiq gripper support
+- **UR.RTDE** (Version 1.6.3.10): Main dependency for RTDE communication and Robotiq gripper support
   - Provides native C++ P/Invoke wrapper
   - Includes native DLLs (rtde.dll, ur_rtde_c_api.dll, boost_thread)
   - Robotiq drivers: `RobotiqGripperNative`, `RobotiqGripperRtde`, `RobotiqGripper` (URScript)
@@ -251,7 +251,7 @@ Rhino 8 on Windows runs Grasshopper plugins on **.NET 8 (CoreCLR)**. A **net48-o
 
 **Native files required beside each `.gha` (and under `runtimes/`):**
 - Windows: `ur_rtde_c_api.dll`, `rtde.dll`, `boost_thread-vc143-mt-x64-1_89.dll` (and/or vc145)
-- macOS: `libur_rtde_c_api.dylib` (prefer `osx-arm64`; `osx-x64` fallback)
+- macOS: `libur_rtde_c_api.dylib` under `runtimes/osx-arm64/native/` and `runtimes/osx-x64/native/` (no flat macOS copy beside `.gha`)
 
 **Windows troubleshooting:** If load still fails after a correct Yak install, install the [VC++ 2015–2022 x64 redistributable](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist).
 
@@ -378,7 +378,7 @@ if (session == null || !session.IsConnected)
 ## Version Management
 
 ### Current Version
-- **Version**: 1.6.3.5 (in `.csproj`)
+- **Version**: 1.6.3.6 (in `.csproj`)
 - **Yak Package**: Available on `yak.rhino3d.com`
 
 ### Version Bump Process

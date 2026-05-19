@@ -39,7 +39,9 @@ stage_framework() {
       [[ -f "$f" ]] && cp "$f" "$dest/"
     done
   done
-  [[ -d "$src/runtimes" ]] && cp -R "$src/runtimes" "$dest/"
+  if [[ -d "$src/runtimes" ]]; then
+    cp -R "$src/runtimes" "$dest/"
+  fi
 }
 
 rm -rf "$STAGE"
@@ -47,6 +49,21 @@ mkdir -p "$STAGE"
 stage_framework net48
 stage_framework net8.0-windows
 stage_framework net8.0
+
+# Mac/Linux Release builds may not copy Windows DLLs into net48; mirror from net8.0-windows for Rhino 7.
+NET48_STAGE="$STAGE/net48"
+WIN_STAGE="$STAGE/net8.0-windows"
+if [[ ! -f "$NET48_STAGE/ur_rtde_c_api.dll" && -f "$WIN_STAGE/ur_rtde_c_api.dll" ]]; then
+  for pattern in ur_rtde_c_api.dll rtde.dll boost_thread-*.dll; do
+    for f in "$WIN_STAGE"/$pattern; do
+      [[ -f "$f" ]] && cp "$f" "$NET48_STAGE/"
+    done
+  done
+  if [[ -d "$WIN_STAGE/runtimes" && ! -d "$NET48_STAGE/runtimes" ]]; then
+    cp -R "$WIN_STAGE/runtimes" "$NET48_STAGE/"
+  fi
+fi
+
 cp "$ROOT/Resources/Icons/robot-duotone.png" "$STAGE/icon.png"
 
 GUID="6d2ecd23-5f02-4314-9c8a-e5a5dc7a1c53"
@@ -85,9 +102,9 @@ verify_yak() {
     net8.0-windows/UR.RTDE.Grasshopper.gha \
     net8.0-windows/ur_rtde_c_api.dll \
     net8.0/UR.RTDE.Grasshopper.gha \
-    net8.0/libur_rtde_c_api.dylib \
     net8.0-windows/runtimes/win-x64/native/ur_rtde_c_api.dll \
-    net8.0/runtimes/osx-arm64/native/libur_rtde_c_api.dylib; do
+    net8.0/runtimes/osx-arm64/native/libur_rtde_c_api.dylib \
+    net8.0/runtimes/osx-x64/native/libur_rtde_c_api.dylib; do
     if ! printf '%s\n' "$listing" | grep -qxF "$required"; then
       echo "ERROR: $yak_file missing: $required" >&2
       missing=1

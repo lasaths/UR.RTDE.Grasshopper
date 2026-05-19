@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.6.3.6] - 2026-05-19
+
+### Fixed
+- macOS Rosetta / x86_64 Rhino 8: ship `runtimes/osx-x64/native/libur_rtde_c_api.dylib` via **UR.RTDE** `1.6.3.10` (RID-first native loader); stop copying a single arm64 dylib beside the `.gha`, which broke x86_64 hosts.
+
+### Changed
+- `UR.RTDE` NuGet dependency `1.6.3.9` → `1.6.3.10`.
+- Yak verify requires `net8.0/runtimes/osx-x64/native/libur_rtde_c_api.dylib`.
+
 ## [1.6.3.5] - 2026-05-19
 
 ### Fixed

@@ -18,7 +18,7 @@
   
   <PropertyGroup>
     <!-- Specifies information for Assembly and Yak -->
-    <Version>1.6.3.5</Version>
+    <Version>1.6.3.6</Version>
     <PackageId>UR.RTDE.Grasshopper</PackageId>
     <Title>UR.RTDE.Grasshopper</Title>
     <Company>UR.RTDE</Company>
@@ -30,7 +30,7 @@
     <Product>UR.RTDE.Grasshopper</Product>
     <!-- Build Yak package by default when Yak is available -->
     <BuildYakPackage Condition="'$(BuildYakPackage)' == ''">True</BuildYakPackage>
-    <URRTDEVersion>1.6.3.9</URRTDEVersion>
+    <URRTDEVersion>1.6.3.10</URRTDEVersion>
     <URRTDELocalFeed Condition="'$(URRTDELocalFeed)' == '' and '$(Configuration)' == 'Debug' and Exists('$(MSBuildThisFileDirectory)../UR.RTDE/src/UR.RTDE/bin/Debug')">$(MSBuildThisFileDirectory)../UR.RTDE/src/UR.RTDE/bin/Debug</URRTDELocalFeed>
     <URRTDELocalFeed Condition="'$(URRTDELocalFeed)' == '' and Exists('$(MSBuildThisFileDirectory)../UR.RTDE/src/UR.RTDE/bin/Release')">$(MSBuildThisFileDirectory)../UR.RTDE/src/UR.RTDE/bin/Release</URRTDELocalFeed>
     <URRTDELocalFeed Condition="'$(URRTDELocalFeed)' == '' and Exists('/Users/lasaths/Documents/GitHub/UR.RTDE/src/UR.RTDE/bin/$(Configuration)')">/Users/lasaths/Documents/GitHub/UR.RTDE/src/UR.RTDE/bin/$(Configuration)</URRTDELocalFeed>
@@ -76,20 +76,13 @@
     <Copy SourceFiles="@(URRTDEFiles)" DestinationFolder="$(OutputPath)" Condition="Exists('%(URRTDEFiles.Identity)')" />
     <Copy SourceFiles="@(URRTDENativeFiles)" DestinationFolder="$(OutputPath)\runtimes\%(RecursiveDir)" Condition="Exists('%(URRTDENativeFiles.Identity)')" />
     
-    <!-- Copy native binaries beside the GHA (Windows: all DLLs; macOS: current single C ABI dylib) -->
+    <!-- Copy native binaries beside the GHA on Windows only; macOS uses runtimes/osx-arm64 and runtimes/osx-x64. -->
     <ItemGroup>
       <NativeDLLs Include="$(OutputPath)\runtimes\win-x64\native\*.dll" />
-      <!-- Prefer osx-arm64 to match Rhino 8 on Apple Silicon; only fallback to osx-x64 when arm64 is unavailable. -->
-      <NativeMacLibs Include="$(OutputPath)\runtimes\osx-arm64\native\libur_rtde_c_api.dylib"
-                     Condition="Exists('$(OutputPath)\runtimes\osx-arm64\native\libur_rtde_c_api.dylib')" />
-
-      <NativeMacLibs Include="$(OutputPath)\runtimes\osx-x64\native\libur_rtde_c_api.dylib"
-                     Condition="!Exists('$(OutputPath)\runtimes\osx-arm64\native\libur_rtde_c_api.dylib') and Exists('$(OutputPath)\runtimes\osx-x64\native\libur_rtde_c_api.dylib')" />
-      <StaleMacNativeFiles Include="$(OutputPath)/librtde*.dylib;$(OutputPath)/libboost*.dylib;$(OutputPath)/runtimes/**/native/librtde*.dylib;$(OutputPath)/runtimes/**/native/libboost*.dylib" />
+      <StaleMacNativeFiles Include="$(OutputPath)/libur_rtde_c_api.dylib;$(OutputPath)/librtde*.dylib;$(OutputPath)/libboost*.dylib;$(OutputPath)/runtimes/**/native/librtde*.dylib;$(OutputPath)/runtimes/**/native/libboost*.dylib" />
     </ItemGroup>
     <Delete Files="@(StaleMacNativeFiles)" Condition="$([MSBuild]::IsOSPlatform('OSX'))" />
     <Copy SourceFiles="@(NativeDLLs)" DestinationFolder="$(OutputPath)" Condition="Exists('%(NativeDLLs.Identity)')" />
-    <Copy SourceFiles="@(NativeMacLibs)" DestinationFolder="$(OutputPath)" Condition="Exists('%(NativeMacLibs.Identity)')" />
     <ItemGroup>
       <MacDylibsToSign Include="$(OutputPath)*.dylib" />
       <MacDylibsToSign Include="$(OutputPath)runtimes/**/native/*.dylib" />
