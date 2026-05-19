@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented in this file.
 
-## [1.6.3.3] - 2026-05-18
+## [1.6.3.3] - 2026-05-19
 
 ### Fixed
 - Windows RTDE connect failed when natives were only under `runtimes/win-x64/native/`; added Windows native preload and `DllImport` resolver in `NativeBootstrap` (same pattern as macOS).
