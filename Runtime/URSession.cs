@@ -31,6 +31,7 @@ namespace UR.RTDE.Grasshopper
         private const int RtdeControlPort = 30003;
         private const int ExternalControlPort = 50002;
         private static int _resolverRegistered;
+        private static int _pluginInitialized;
 
         private readonly object _lockObj = new object();
         private UR.RTDE.RTDEControl _control;
@@ -44,10 +45,15 @@ namespace UR.RTDE.Grasshopper
         public bool IsConnected => _isConnected;
         public string LastError { get; private set; }
 
-        static URSession()
+        static URSession() => EnsurePluginInitialized();
+
+        internal static void EnsurePluginInitialized()
         {
-            NativeBootstrap.EnsureLoaded();
+            if (Interlocked.Exchange(ref _pluginInitialized, 1) != 0)
+                return;
+
             RegisterAssemblyResolver();
+            NativeBootstrap.EnsureLoaded();
         }
 
         public URSession(string ip)

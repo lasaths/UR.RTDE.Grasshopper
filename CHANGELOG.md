@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.6.3.4] - 2026-05-19
+
+### Fixed
+- Windows Rhino 8 failed to load RTDE natives because Yak shipped only a `net48` build without a CoreCLR `DllImport` resolver; Rhino 8 now uses multi-target Yak layout (`net8.0-windows`, `net8.0`, `net48`).
+- Windows native preload runs at Grasshopper assembly load via `GH_AssemblyPriority`, with `LoadLibrary`, dependency preload, and plugin-directory search.
+
+### Compatibility
+- No breaking API or component GUID changes.
+
 ## [1.6.3.3] - 2026-05-19
 
 ### Fixed

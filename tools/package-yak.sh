@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
-# Build UR-RTDE-Grasshopper yak packages (rh8 + rh7) from Release/net48 output.
+# Build UR-RTDE-Grasshopper yak packages (rh8 + rh7) with multi-target layout for Rhino 8.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VERSION="${1:-}"
-OUT_DIR="$ROOT/bin/Release/net48"
 STAGE="$ROOT/bin/Release/yak-staging"
 if [[ -x "/Volumes/Storage/00_Applications/Rhino 8.app/Contents/Resources/bin/yak" ]]; then
   YAK="/Volumes/Storage/00_Applications/Rhino 8.app/Contents/Resources/bin/yak"
@@ -22,22 +21,32 @@ if [[ ! -x "$YAK" ]]; then
   bash "$ROOT/tools/install-yak.sh"
 fi
 
-if [[ ! -f "$OUT_DIR/UR.RTDE.Grasshopper.gha" ]]; then
-  echo "Missing $OUT_DIR/UR.RTDE.Grasshopper.gha — run: dotnet build -c Release" >&2
-  exit 1
-fi
+stage_framework() {
+  local framework="$1"
+  local src="$ROOT/bin/Release/$framework"
+  local dest="$STAGE/$framework"
+
+  if [[ ! -f "$src/UR.RTDE.Grasshopper.gha" ]]; then
+    echo "Missing $src/UR.RTDE.Grasshopper.gha — run: dotnet build -c Release" >&2
+    exit 1
+  fi
+
+  mkdir -p "$dest"
+  cp "$src/UR.RTDE.Grasshopper.gha" "$dest/"
+  cp "$src/UR.RTDE.dll" "$dest/"
+  for pattern in ur_rtde_c_api.dll rtde.dll boost_thread-*.dll libur_rtde_c_api.dylib; do
+    for f in "$src"/$pattern; do
+      [[ -f "$f" ]] && cp "$f" "$dest/"
+    done
+  done
+  [[ -d "$src/runtimes" ]] && cp -R "$src/runtimes" "$dest/"
+}
 
 rm -rf "$STAGE"
 mkdir -p "$STAGE"
-cp "$OUT_DIR/UR.RTDE.Grasshopper.gha" "$STAGE/"
-cp "$OUT_DIR/UR.RTDE.dll" "$STAGE/"
-# Flat natives beside the GHA (Rhino P/Invoke probes the plugin folder, not runtimes/ only).
-for pattern in ur_rtde_c_api.dll rtde.dll boost_thread-*.dll libur_rtde_c_api.dylib; do
-  for f in "$OUT_DIR"/$pattern; do
-    [[ -f "$f" ]] && cp "$f" "$STAGE/"
-  done
-done
-[[ -d "$OUT_DIR/runtimes" ]] && cp -R "$OUT_DIR/runtimes" "$STAGE/"
+stage_framework net48
+stage_framework net8.0-windows
+stage_framework net8.0
 cp "$ROOT/Resources/Icons/robot-duotone.png" "$STAGE/icon.png"
 
 GUID="6d2ecd23-5f02-4314-9c8a-e5a5dc7a1c53"
@@ -60,6 +69,7 @@ keywords:
 EOF
 
 cd "$STAGE"
+OUT_DIR="$ROOT/bin/Release/net48"
 rm -f "$OUT_DIR"/*.yak
 "$YAK" build
 PKG="$(ls -1 ur-rtde-grasshopper-"${VERSION}"-rh8_0-any.yak)"
@@ -70,13 +80,14 @@ verify_yak() {
   local listing
   listing="$(unzip -Z1 "$yak_file")"
   for required in \
-    UR.RTDE.Grasshopper.gha \
-    UR.RTDE.dll \
-    ur_rtde_c_api.dll \
-    rtde.dll \
-    libur_rtde_c_api.dylib \
-    runtimes/win-x64/native/ur_rtde_c_api.dll \
-    runtimes/osx-arm64/native/libur_rtde_c_api.dylib; do
+    net48/UR.RTDE.Grasshopper.gha \
+    net48/ur_rtde_c_api.dll \
+    net8.0-windows/UR.RTDE.Grasshopper.gha \
+    net8.0-windows/ur_rtde_c_api.dll \
+    net8.0/UR.RTDE.Grasshopper.gha \
+    net8.0/libur_rtde_c_api.dylib \
+    net8.0-windows/runtimes/win-x64/native/ur_rtde_c_api.dll \
+    net8.0/runtimes/osx-arm64/native/libur_rtde_c_api.dylib; do
     if ! printf '%s\n' "$listing" | grep -qxF "$required"; then
       echo "ERROR: $yak_file missing: $required" >&2
       missing=1
